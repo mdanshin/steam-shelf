@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#07101f">
+  <meta name="description" content="Steam Shelf — защищённая локальная полка для библиотеки, желаемого и скидок Steam.">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'; upgrade-insecure-requests">
+  <meta name="referrer" content="no-referrer">
+  <title>Steam Shelf — ваша игровая полка</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="Steam Shelf"><span>S</span> STEAM <b>SHELF</b></a>
+    <a class="github-link" href="https://github.com/mdanshin/steam-shelf">GitHub ↗</a>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">ЛОКАЛЬНОЕ ПРИЛОЖЕНИЕ · ОТКРЫТЫЙ КОД</p>
+        <h1>Ваша Steam-коллекция — на одной защищённой полке.</h1>
+        <p class="lead">Библиотека, список желаемого и лучшие скидки. Персональный Steam API key передаётся только локальному серверу, шифруется до записи и не попадает в GitHub.</p>
+        <div class="actions">
+          <a class="primary" href="https://github.com/mdanshin/steam-shelf#локальная-настройка">Запустить локально</a>
+          <a class="secondary" href="https://github.com/mdanshin/steam-shelf">Посмотреть код</a>
+        </div>
+        <p class="notice"><strong>Важно:</strong> эта публичная страница — презентация проекта. Персональный вход и синхронизация запускаются локально, потому что GitHub Pages не хранит секреты и не выполняет Node.js.</p>
+      </div>
+
+      <div class="shelf" aria-label="Предпросмотр интерфейса Steam Shelf">
+        <div class="shelf-head"><span>МОЯ КОЛЛЕКЦИЯ</span><b>Библиотека</b></div>
+        <div class="game-grid">
+          <article class="game game-one"><span>СТРАТЕГИЯ</span><b>Большая кампания</b><small>128 часов</small></article>
+          <article class="game game-two"><span>ТАКТИКА</span><b>Последний рубеж</b><small>42 часа</small></article>
+          <article class="game game-three"><span>СКИДКА</span><b>Выбор недели</b><small>−75%</small></article>
+        </div>
+        <div class="shelf-nav"><span>▦ Библиотека</span><span>♡ Желаемое</span><span>％ Скидки</span></div>
+      </div>
+    </section>
+
+    <section class="features" aria-labelledby="features-title">
+      <p class="eyebrow">ЧТО ВНУТРИ</p>
+      <h2 id="features-title">Личная коллекция без передачи ключей третьим лицам</h2>
+      <div class="feature-grid">
+        <article><span>01</span><h3>Библиотека</h3><p>Игры, часы и быстрый поиск по вашей коллекции.</p></article>
+        <article><span>02</span><h3>Желаемое</h3><p>Список желаний с актуальными региональными ценами.</p></article>
+        <article><span>03</span><h3>Скидки</h3><p>Общая витрина предложений Steam без персональных данных.</p></article>
+        <article><span>04</span><h3>Защита</h3><p>Google OAuth, серверные сессии и AES-256-GCM для API key.</p></article>
+      </div>
+    </section>
+
+    <section class="run" id="run">
+      <div><p class="eyebrow">БЫСТРЫЙ СТАРТ</p><h2>Запускается на вашем компьютере</h2><p>Понадобятся Node.js 24+, Google OAuth credentials, SteamID64 и персональный Steam Web API key.</p></div>
+      <ol>
+        <li><span>1</span><div><b>Скачайте проект</b><code>git clone https://github.com/mdanshin/steam-shelf.git</code></div></li>
+        <li><span>2</span><div><b>Настройте локальные секреты</b><code>cp .env.example .env.local</code></div></li>
+        <li><span>3</span><div><b>Запустите Steam Shelf</b><code>npm start</code></div></li>
+      </ol>
+    </section>
+  </main>
+
+  <footer><span>Steam Shelf</span><span>Не связан с Valve Corporation.</span><a href="https://github.com/mdanshin/steam-shelf">Исходный код</a></footer>
+</body>
+</html>

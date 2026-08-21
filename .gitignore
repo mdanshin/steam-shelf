@@ -1,0 +1,9 @@
+node_modules/
+.env.local
+data/*.sqlite
+data/*.sqlite-*
+data/deal-covers/
+*.log
+__pycache__/
+*.pyc
+private-legacy/

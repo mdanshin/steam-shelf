@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#07101f">
+  <title>Steam Shelf — библиотека, желаемое и скидки</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main id="login-screen" class="login-shell">
+    <section class="login-card">
+      <span class="eyebrow">ВАША ИГРОВАЯ ПОЛКА</span>
+      <h1>Вся ваша Steam-коллекция — в одном месте.</h1>
+      <p>Библиотека, список желаемого и лучшие скидки. Google передаёт имя, email и аватар только для личного аккаунта приложения — вход не даёт доступа к Steam.</p>
+      <a id="google-login" class="google-button" href="/auth/google"><span class="google-mark">G</span> Продолжить с Google</a>
+      <p class="legal-links"><a href="/privacy.html">Конфиденциальность</a><span>·</span><a href="/terms.html">Условия</a></p>
+      <p id="setup-status" class="setup-status" hidden></p>
+      <div class="privacy-note"><strong>Приватность по умолчанию</strong><br>Steam API key шифруется на сервере и никогда не отправляется обратно в браузер.</div>
+    </section>
+    <section class="login-art" aria-hidden="true">
+      <div class="orb orb-one"></div><div class="orb orb-two"></div>
+      <div class="mock-card mock-one">БИБЛИОТЕКА <b>245 игр</b></div>
+      <div class="mock-card mock-two">ЖЕЛАЕМОЕ <b>Скидки до −90%</b></div>
+    </section>
+  </main>
+
+  <div id="app" class="app-shell" hidden>
+    <aside class="sidebar">
+      <a class="brand" href="#library" aria-label="Steam Shelf"><span class="brand-mark">S</span><span>STEAM<br><strong>SHELF</strong></span></a>
+      <nav aria-label="Основная навигация">
+        <button class="nav-button active" data-view="library"><span>▦</span> Библиотека</button>
+        <button class="nav-button" data-view="wishlist"><span>♡</span> Желаемое</button>
+        <button class="nav-button" data-view="deals"><span>％</span> Скидки</button>
+        <button class="nav-button" data-view="settings"><span>⚙</span> Настройки</button>
+      </nav>
+      <div class="sidebar-foot">Данные Steam синхронизируются только по вашему запросу.</div>
+    </aside>
+
+    <section class="workspace">
+      <header class="topbar">
+        <div><p class="eyebrow" id="section-kicker">МОЯ КОЛЛЕКЦИЯ</p><h1 id="section-title">Библиотека</h1></div>
+        <div class="profile"><img id="profile-avatar" alt=""><div><strong id="profile-name"></strong><small id="profile-email"></small></div><button id="logout" class="icon-button" title="Выйти" aria-label="Выйти">↗</button></div>
+      </header>
+
+      <div id="flash" class="flash" role="status" aria-live="polite" hidden></div>
+
+      <section id="onboarding" class="onboarding" hidden>
+        <div><span class="eyebrow">ОДИН ШАГ ДО СТАРТА</span><h2>Подключите свой Steam</h2><p>Укажите SteamID64 и персональный Web API key. Ключ будет зашифрован до записи в базу.</p></div>
+        <button class="primary" data-go-settings>Подключить Steam →</button>
+      </section>
+
+      <section id="catalog-toolbar" class="toolbar">
+        <label class="search"><span>⌕</span><input id="search" type="search" placeholder="Найти игру" autocomplete="off"></label>
+        <label class="select-label">Сортировка <select id="sort"></select></label>
+        <button id="sync" class="primary">Обновить</button>
+      </section>
+
+      <section id="summary" class="summary"></section>
+      <section id="catalog" class="catalog" aria-live="polite"></section>
+      <section id="empty" class="empty" hidden><div class="empty-icon">◇</div><h2 id="empty-title">Здесь пока пусто</h2><p id="empty-text"></p></section>
+
+      <section id="settings-panel" class="settings-panel" hidden>
+        <div class="settings-copy"><span class="eyebrow">ПОДКЛЮЧЕНИЕ STEAM</span><h2>Ваши данные доступа</h2><p>SteamID64 определяет профиль. API key нужен только серверу для чтения списка принадлежащих вам игр.</p><ul><li>Ключ хранится в AES-256-GCM шифровании</li><li>Не попадает в URL, логи или LocalStorage</li><li>Можно заменить или удалить в любой момент</li></ul></div>
+        <form id="settings-form" class="settings-form">
+          <label>SteamID64<input id="steam-id" name="steamId" inputmode="numeric" pattern="7656119[0-9]{10}" required placeholder="7656119…"><small>17 цифр, начинающихся с 7656119.</small></label>
+          <label>Steam Web API key<input id="api-key" name="apiKey" type="password" autocomplete="new-password" pattern="[A-Fa-f0-9]{32}" placeholder="Оставьте пустым, чтобы не менять"><small id="api-key-status">Ключ ещё не сохранён</small></label>
+          <div class="help"><strong>Где взять данные</strong><ol><li><b>SteamID64:</b> откройте <a href="https://store.steampowered.com/account/" target="_blank" rel="noopener noreferrer">Account Details</a>. Steam ID указан сразу под именем аккаунта — скопируйте все 17 цифр.</li><li><b>API key:</b> создайте персональный ключ на <a href="https://steamcommunity.com/dev/apikey" target="_blank" rel="noopener noreferrer">steamcommunity.com/dev/apikey</a>.</li></ol>SteamID64 не является секретом. API key никому не отправляйте.</div>
+          <div class="form-actions"><button class="primary" type="submit">Сохранить безопасно</button><button class="danger" id="delete-settings" type="button">Удалить подключение</button></div>
+        </form>
+      </section>
+    </section>
+  </div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
