@@ -1,0 +1,43 @@
+[Unit]
+Description=Steam Shelf authenticated Steam API gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=steam-shelf
+Group=steam-shelf
+WorkingDirectory=/opt/steam-shelf-api/current/gateway
+ExecStart=/opt/steam-shelf-api/runtime/bin/node /opt/steam-shelf-api/current/gateway/server.js
+Environment=NODE_ENV=production
+Environment=PORT=8001
+Environment=FIREBASE_PROJECT_ID=steam-shelf-mdanshin
+Environment=ALLOWED_ORIGINS=https://danshin.ms,https://mdanshin.github.io
+Environment=QUOTA_DB_PATH=/var/lib/steam-shelf-gateway/limits.sqlite
+StateDirectory=steam-shelf-gateway
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=30s
+TimeoutStopSec=15s
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LimitNOFILE=1024
+TasksMax=64
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

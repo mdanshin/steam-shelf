@@ -4,64 +4,71 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#07101f">
-  <meta name="description" content="Steam Shelf — защищённая локальная полка для библиотеки, желаемого и скидок Steam.">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; object-src 'none'; frame-src 'none'; upgrade-insecure-requests">
-  <meta name="referrer" content="no-referrer">
-  <title>Steam Shelf — ваша игровая полка</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://apis.google.com; style-src 'self'; img-src 'self' https://*.steamstatic.com https://lh3.googleusercontent.com data:; connect-src 'self' https://api.danshin.ms https://*.googleapis.com https://securetoken.googleapis.com https://identitytoolkit.googleapis.com; frame-src https://*.firebaseapp.com https://accounts.google.com; base-uri 'none'; form-action 'self'; object-src 'none'; upgrade-insecure-requests">
+  <title>Steam Shelf — библиотека, желаемое и скидки</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./styles.css?v=2">
 </head>
 <body>
-  <header class="topbar">
-    <a class="brand" href="./" aria-label="Steam Shelf"><span>S</span> STEAM <b>SHELF</b></a>
-    <a class="github-link" href="https://github.com/mdanshin/steam-shelf">GitHub ↗</a>
-  </header>
-
-  <main>
-    <section class="hero">
-      <div class="hero-copy">
-        <p class="eyebrow">ЛОКАЛЬНОЕ ПРИЛОЖЕНИЕ · ОТКРЫТЫЙ КОД</p>
-        <h1>Ваша Steam-коллекция — на одной защищённой полке.</h1>
-        <p class="lead">Библиотека, список желаемого и лучшие скидки. Персональный Steam API key передаётся только локальному серверу, шифруется до записи и не попадает в GitHub.</p>
-        <div class="actions">
-          <a class="primary" href="https://github.com/mdanshin/steam-shelf#локальная-настройка">Запустить локально</a>
-          <a class="secondary" href="https://github.com/mdanshin/steam-shelf">Посмотреть код</a>
-        </div>
-        <p class="notice"><strong>Важно:</strong> эта публичная страница — презентация проекта. Персональный вход и синхронизация запускаются локально, потому что GitHub Pages не хранит секреты и не выполняет Node.js.</p>
-      </div>
-
-      <div class="shelf" aria-label="Предпросмотр интерфейса Steam Shelf">
-        <div class="shelf-head"><span>МОЯ КОЛЛЕКЦИЯ</span><b>Библиотека</b></div>
-        <div class="game-grid">
-          <article class="game game-one"><span>СТРАТЕГИЯ</span><b>Большая кампания</b><small>128 часов</small></article>
-          <article class="game game-two"><span>ТАКТИКА</span><b>Последний рубеж</b><small>42 часа</small></article>
-          <article class="game game-three"><span>СКИДКА</span><b>Выбор недели</b><small>−75%</small></article>
-        </div>
-        <div class="shelf-nav"><span>▦ Библиотека</span><span>♡ Желаемое</span><span>％ Скидки</span></div>
-      </div>
+  <main id="login-screen" class="login-shell">
+    <section class="login-card">
+      <span class="eyebrow">ВАША ИГРОВАЯ ПОЛКА</span>
+      <h1>Вся ваша Steam-коллекция — в одном месте.</h1>
+      <p>Войдите через Google, укажите SteamID64 и собственный Steam Web API key — библиотека и wishlist появятся на этой странице.</p>
+      <button id="google-login" class="google-button" type="button"><span class="google-mark">G</span> Продолжить с Google</button>
+      <p class="legal-links"><a href="./privacy.html">Конфиденциальность</a><span>·</span><a href="./terms.html">Условия</a></p>
+      <p id="setup-status" class="setup-status" hidden></p>
+      <div class="privacy-note"><strong>Локальное хранение</strong><br>SteamID, API key и персональные снимки сохраняются только в IndexedDB этого браузера. Ключ передаётся защищённому gateway только во время ручной синхронизации и не сохраняется на сервере.</div>
     </section>
-
-    <section class="features" aria-labelledby="features-title">
-      <p class="eyebrow">ЧТО ВНУТРИ</p>
-      <h2 id="features-title">Личная коллекция без передачи ключей третьим лицам</h2>
-      <div class="feature-grid">
-        <article><span>01</span><h3>Библиотека</h3><p>Игры, часы и быстрый поиск по вашей коллекции.</p></article>
-        <article><span>02</span><h3>Желаемое</h3><p>Список желаний с актуальными региональными ценами.</p></article>
-        <article><span>03</span><h3>Скидки</h3><p>Общая витрина предложений Steam без персональных данных.</p></article>
-        <article><span>04</span><h3>Защита</h3><p>Google OAuth, серверные сессии и AES-256-GCM для API key.</p></article>
-      </div>
-    </section>
-
-    <section class="run" id="run">
-      <div><p class="eyebrow">БЫСТРЫЙ СТАРТ</p><h2>Запускается на вашем компьютере</h2><p>Понадобятся Node.js 24+, Google OAuth credentials, SteamID64 и персональный Steam Web API key.</p></div>
-      <ol>
-        <li><span>1</span><div><b>Скачайте проект</b><code>git clone https://github.com/mdanshin/steam-shelf.git</code></div></li>
-        <li><span>2</span><div><b>Настройте локальные секреты</b><code>cp .env.example .env.local</code></div></li>
-        <li><span>3</span><div><b>Запустите Steam Shelf</b><code>npm start</code></div></li>
-      </ol>
+    <section class="login-art" aria-hidden="true">
+      <div class="orb orb-one"></div><div class="orb orb-two"></div>
+      <div class="mock-card mock-one">БИБЛИОТЕКА <b>Ваши игры</b></div>
+      <div class="mock-card mock-two">ЖЕЛАЕМОЕ <b>Актуальные цены</b></div>
     </section>
   </main>
 
-  <footer><span>Steam Shelf</span><span>Не связан с Valve Corporation.</span><a href="https://github.com/mdanshin/steam-shelf">Исходный код</a></footer>
+  <div id="app" class="app-shell" hidden>
+    <aside class="sidebar">
+      <a class="brand" href="#library" aria-label="Steam Shelf"><span class="brand-mark">S</span><span>STEAM<br><strong>SHELF</strong></span></a>
+      <nav aria-label="Основная навигация">
+        <button class="nav-button active" data-view="library"><span>▦</span> Библиотека</button>
+        <button class="nav-button" data-view="wishlist"><span>♡</span> Желаемое</button>
+        <button class="nav-button" data-view="deals"><span>％</span> Скидки</button>
+        <button class="nav-button" data-view="settings"><span>⚙</span> Настройки</button>
+      </nav>
+      <div class="sidebar-foot">Персональные данные остаются в этом браузере.</div>
+    </aside>
+
+    <section class="workspace">
+      <header class="topbar">
+        <div><p class="eyebrow" id="section-kicker">МОЯ КОЛЛЕКЦИЯ</p><h1 id="section-title">Библиотека</h1></div>
+        <div class="profile"><img id="profile-avatar" alt=""><div><strong id="profile-name"></strong><small id="profile-email"></small></div><button id="logout" class="icon-button" title="Выйти" aria-label="Выйти">↗</button></div>
+      </header>
+      <div id="flash" class="flash" role="status" aria-live="polite" hidden></div>
+      <section id="onboarding" class="onboarding" hidden>
+        <div><span class="eyebrow">ОДИН ШАГ ДО СТАРТА</span><h2>Подключите свой Steam</h2><p>SteamID64 и API key будут сохранены только на этом устройстве.</p></div>
+        <button class="primary" data-go-settings>Подключить Steam →</button>
+      </section>
+      <section id="catalog-toolbar" class="toolbar">
+        <label class="search"><span>⌕</span><input id="search" type="search" placeholder="Найти игру" autocomplete="off"></label>
+        <label class="select-label">Сортировка <select id="sort"></select></label>
+        <button id="sync" class="primary">Обновить</button>
+      </section>
+      <section id="summary" class="summary"></section>
+      <section id="catalog" class="catalog" aria-live="polite"></section>
+      <section id="empty" class="empty" hidden><div class="empty-icon">◇</div><h2 id="empty-title">Здесь пока пусто</h2><p id="empty-text"></p></section>
+      <section id="settings-panel" class="settings-panel" hidden>
+        <div class="settings-copy"><span class="eyebrow">ПОДКЛЮЧЕНИЕ STEAM</span><h2>Данные на этом устройстве</h2><p>SteamID64 определяет профиль. API key передаётся gateway только для запроса библиотеки Steam и не сохраняется сервером.</p><ul><li>Хранятся локально в IndexedDB</li><li>Не записываются на сервер, в Firebase или GitHub</li><li>Можно удалить одним действием</li></ul></div>
+        <form id="settings-form" class="settings-form">
+          <label>SteamID64<input id="steam-id" name="steamId" inputmode="numeric" pattern="7656119[0-9]{10}" required placeholder="7656119…"><small>17 цифр, начинающихся с 7656119.</small></label>
+          <label>Steam Web API key<input id="api-key" name="apiKey" type="password" autocomplete="new-password" pattern="[A-Fa-f0-9]{32}" placeholder="Оставьте пустым, чтобы не менять"><small id="api-key-status">Ключ ещё не сохранён</small></label>
+          <div class="help"><strong>Где взять данные</strong><ol><li><b>SteamID64:</b> откройте <a href="https://store.steampowered.com/account/" target="_blank" rel="noopener noreferrer">Account Details</a> и скопируйте Steam ID.</li><li><b>API key:</b> создайте ключ на <a href="https://steamcommunity.com/dev/apikey" target="_blank" rel="noopener noreferrer">официальной странице Steam</a>.</li></ol>API key является секретом: используйте его только на своём устройстве.</div>
+          <div class="form-actions"><button class="primary" type="submit">Проверить и сохранить</button><button class="danger" id="delete-settings" type="button">Удалить локальные данные</button></div>
+        </form>
+      </section>
+    </section>
+  </div>
+  <script src="./firebase-config.js?v=2"></script>
+  <script type="module" src="./app.js?v=2"></script>
 </body>
 </html>

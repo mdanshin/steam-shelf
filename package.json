@@ -6,8 +6,15 @@
   "engines": { "node": ">=24.0.0" },
   "scripts": {
     "start": "node --env-file-if-exists=.env.local server.js",
+    "build:client": "node scripts/build_client.js",
     "test": "python -m unittest discover -s test -p \"test_*.py\" && node --test",
-    "check": "node --check server.js && node --check public/app.js && node --check public/catalog-lifecycle.js && node --check lib/config.js && node --check lib/google-oauth.js && node --check lib/secrets.js && node --check lib/steam-api.js && node --check lib/store.js && python scripts/verify_pages.py",
+    "check": "node --check server.js && node --check public/app.js && node --check public/catalog-lifecycle.js && node --check client/app.js && node --check client/core.js && node --check client/gateway.js && node --check client/session.js && node --check client/vault.js && node --check gateway/server.js && node --check functions/index.js && node --check functions/handler.js && node --check functions/steam-sync.js && node --check lib/config.js && node --check lib/google-oauth.js && node --check lib/secrets.js && node --check lib/steam-api.js && node --check lib/store.js && npm run build:client && python scripts/verify_pages.py",
     "sync:deals": "python scripts/sync_deals.py"
+  },
+  "dependencies": {
+    "firebase": "12.18.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
   }
 }

@@ -1,22 +1,42 @@
 # Steam Shelf
 
-Отдельное серверное приложение для личной библиотеки Steam, wishlist и общей витрины скидок. LostFilm-кода и данных здесь нет.
+Публичное клиентское приложение для личной библиотеки Steam, wishlist и общей витрины скидок. LostFilm-кода и данных здесь нет.
 
-Публичная страница проекта: https://mdanshin.github.io/steam-shelf/
+Публичная страница проекта: https://danshin.ms/steam-shelf/
 
-GitHub Pages публикует только статическую презентацию. Персональный Steam Shelf запускается локально: Pages не выполняет Node.js, OAuth callback и SQLite и не может безопасно хранить пользовательские Steam API keys.
+GitHub Pages публикует рабочий интерфейс. Google-вход обслуживает бесплатный Firebase Authentication, а ограниченный gateway на `api.danshin.ms` запрашивает Steam API, потому что Steam не разрешает эти запросы напрямую из браузера через CORS. SteamID64, API key и персональные snapshots остаются в IndexedDB устройства и не сохраняются gateway.
 
 ## Возможности
 
-- вход через Google OAuth 2.0 Authorization Code + PKCE/state;
-- отдельные аккаунты и серверные HttpOnly-сессии;
-- SteamID64 и персональный Steam Web API key для каждого пользователя;
-- API keys шифруются AES-256-GCM до записи в SQLite;
-- личные snapshots библиотеки и wishlist изолированы по user ID;
+- вход через Google с Firebase Authentication;
+- локальное account-scoped хранилище IndexedDB для каждого Firebase user ID;
+- SteamID64 и персональный Steam Web API key остаются на устройстве пользователя;
+- API key передаётся gateway только во время ручной синхронизации и не сохраняется им;
+- gateway проверяет Firebase ID token, принимает только library/wishlist и ограничивает частоту синхронизаций;
 - общая витрина Steam Specials с точными ценами в копейках;
-- Steam API key не возвращается браузеру, не попадает в URL и не хранится в LocalStorage.
+- Steam API key не попадает в URL, Firestore, GitHub или LocalStorage.
 
-## Локальная настройка
+## Публичный клиент
+
+Клиент собирается в `site/`:
+
+```bash
+npm ci
+npm run build:client
+```
+
+Firebase-конфигурация веб-приложения находится в `site/firebase-config.js`. Она является публичным идентификатором Firebase-проекта, а не серверным секретом. Google provider должен разрешать домены `danshin.ms` и `mdanshin.github.io`.
+
+Gateway разворачивается отдельно на loopback-порту `8001` за точным nginx route `/steam-shelf/v1/sync`:
+
+```bash
+npm --prefix gateway ci --omit=dev
+QUOTA_DB_PATH=.tmp/gateway-limits.sqlite node gateway/server.js
+```
+
+Production unit и nginx snippets находятся в `deploy/`. Gateway не требует Firebase Blaze, Firestore, Firebase App Check или service-account key: подпись короткоживущего Firebase ID token проверяется по публичным Google JWK. Выход или отзыв доступа может оставлять уже выпущенный token действительным до истечения его срока, не более одного часа.
+
+## Локальный серверный вариант
 
 Требуется Node.js 24+ и Python для обновления общей витрины скидок.
 
@@ -56,7 +76,9 @@ npm run sync:deals
 ## Граница безопасности
 
 - `.env.local`, SQLite и runtime-файлы исключены из Git.
-- Эта версия рассчитана на прямой локальный запуск на доверенном loopback-интерфейсе. Не размещайте её за reverse proxy: приложение намеренно не доверяет `X-Forwarded-For`, а значит прокси объединит клиентов в один rate-limit bucket. Для публичного размещения сначала добавьте отдельную проверенную конфигурацию доверенного прокси и TLS.
+- Серверный вариант в `server.js` рассчитан только на локальный loopback и не используется публичным клиентом; production gateway находится в `gateway/server.js`.
 - `STEAM_KEY_ENCRYPTION_SECRET` нельзя менять без миграции: иначе существующие API keys невозможно расшифровать.
 - Делайте зашифрованные резервные копии SQLite и ключа отдельно.
 - Google OAuth credentials и ключ шифрования не должны попадать в клиентский JavaScript, Git или логи.
+- Gateway не журналирует request body, Authorization, Firebase UID, SteamID64, Steam API key или ответы Steam. Короткие лимиты хранятся в памяти, а дневные лимиты переживают restart в SQLite только под SHA-256-хешем Firebase UID.
+- IndexedDB не является аппаратным хранилищем секретов: расширения браузера, XSS или доступ к профилю браузера могут раскрыть локальный API key. Используйте отдельный Steam Web API key и удаляйте локальные данные на чужом устройстве.

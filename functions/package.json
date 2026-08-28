@@ -1,0 +1,14 @@
+{
+  "name": "steam-shelf-functions",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "engines": { "node": "22" },
+  "dependencies": {
+    "firebase-admin": "14.3.0",
+    "firebase-functions": "7.3.2"
+  },
+  "overrides": {
+    "uuid": "11.1.1"
+  }
+}
