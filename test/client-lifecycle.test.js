@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCatalogLifecycle } from '../public/catalog-lifecycle.js';
+import { createCatalogLifecycle, currentDeals } from '../public/catalog-lifecycle.js';
 
 test('disconnect clears personal catalogs and invalidates in-flight responses', () => {
   const lifecycle = createCatalogLifecycle();
@@ -19,4 +19,11 @@ test('disconnect clears personal catalogs and invalidates in-flight responses', 
   assert.equal(lifecycle.canStore('deals', requestRevision), true);
   assert.equal(lifecycle.canRender('library', 'wishlist'), false);
   assert.equal(lifecycle.canRender('library', 'library'), true);
+});
+
+test('local catalog excludes deals after their source end time', () => {
+  const ended = { appid: 1159420, discountEndAt: 1_787_850_000 };
+  const active = { appid: 20, discountEndAt: 1_788_195_600 };
+
+  assert.deepEqual(currentDeals([ended, active], 1_787_890_000), [active]);
 });

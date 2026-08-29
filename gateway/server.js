@@ -132,7 +132,12 @@ export class GatewayLimiter {
     const [windowMs, shortLimit, dailyLimit] = resource === 'library'
       ? [5 * 60_000, 6, 30]
       : [15 * 60_000, 2, 8];
-    const maximum = resource === 'wishlist' ? 1 : 4;
+    // This cap protects the shared Steam upstream (paced through one UpstreamPacer) from
+    // too many simultaneous fan-outs, not per-user fairness — that's the per-uid inFlight
+    // lock plus the short/daily quotas below. A cap of 1 made any two legitimate users who
+    // synced their wishlist within the same ~30s window collide on a single global slot;
+    // a small cap keeps the upstream-protection intent while letting a few users overlap.
+    const maximum = resource === 'wishlist' ? 3 : 4;
     if (this.active[resource] >= maximum) throw new HttpError(429, 'busy', 'Try again later.', 10);
     const flight = uid;
     if (this.inFlight.has(flight)) throw new HttpError(409, 'already_running', 'This sync is already running.');

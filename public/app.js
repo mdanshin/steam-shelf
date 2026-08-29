@@ -1,4 +1,4 @@
-import { createCatalogLifecycle } from './catalog-lifecycle.js';
+import { createCatalogLifecycle, currentDeals } from './catalog-lifecycle.js';
 
 const $ = (selector) => document.querySelector(selector);
 const lifecycle = createCatalogLifecycle();
@@ -93,10 +93,11 @@ function sorted(items) {
 function renderCatalog() {
   const data = state.catalogs.get(state.view) || { games: [], syncedAt: null };
   const query = state.query.trim().toLocaleLowerCase('ru');
-  const games = sorted((data.games || []).filter((game) => !query || String(game.name).toLocaleLowerCase('ru').includes(query)));
+  const available = state.view === 'deals' ? currentDeals(data.games || []) : (data.games || []);
+  const games = sorted(available.filter((game) => !query || String(game.name).toLocaleLowerCase('ru').includes(query)));
   $('#catalog').replaceChildren(...games.slice(0, 600).map(card));
   $('#summary').replaceChildren(
-    element('span', '', `${games.length} из ${data.games?.length || 0}`),
+    element('span', '', `${games.length} из ${available.length}`),
     element('span', '', data.syncedAt ? `Обновлено ${new Date(data.syncedAt).toLocaleString('ru-RU')}` : 'Ещё не синхронизировано'),
   );
   $('#empty').hidden = games.length > 0;

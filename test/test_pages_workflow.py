@@ -10,15 +10,19 @@ class PagesWorkflowTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/pages.yml").read_text(encoding="utf-8")
 
         self.assertIn(
-            "sudo python -m unittest discover -s test -p 'test_deploy_config.py'",
+            "sudo python -m unittest test.test_deploy_config.DeployConfigTests."
+            "test_runtime_integrity_allows_internal_symlinks_and_rejects_extra_entries",
             workflow,
         )
+        # Keep this scoped to the one test that actually needs root — not the whole file.
+        self.assertNotIn("unittest discover", workflow)
 
     def test_pages_refreshes_deals_on_a_recurring_schedule_before_building(self):
         workflow = (ROOT / ".github/workflows/pages.yml").read_text(encoding="utf-8")
 
         self.assertIn("schedule:", workflow)
         self.assertRegex(workflow, r"cron:\s*['\"]?0 \*/6 \* \* \*['\"]?")
+        self.assertIn("STEAM_DEALS_SKIP_COVERS=1 npm run sync:deals", workflow)
         self.assertLess(workflow.index("npm run sync:deals"), workflow.index("npm run build:client"))
 
 

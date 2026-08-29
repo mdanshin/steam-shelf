@@ -31,8 +31,8 @@ jobs:
         run: |
           npm ci
           npm test
-          sudo python -m unittest discover -s test -p 'test_deploy_config.py'
-          npm run sync:deals
+          sudo python -m unittest test.test_deploy_config.DeployConfigTests.test_runtime_integrity_allows_internal_symlinks_and_rejects_extra_entries
+          STEAM_DEALS_SKIP_COVERS=1 npm run sync:deals
           npm run build:client
       - name: Configure Pages
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5

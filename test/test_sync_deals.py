@@ -69,5 +69,16 @@ class CompletenessTests(unittest.TestCase):
             self.assertEqual(output.read_text(encoding="utf-8"), sentinel)
 
 
+class CoverSyncTests(unittest.TestCase):
+    def test_metadata_only_sync_does_not_download_covers(self):
+        deals = [{"appid": 1159420, "_coverUrl": "https://shared.fastly.steamstatic.com/cover.jpg"}]
+
+        with mock.patch.object(sync_deals, "save_cover") as save_cover:
+            sync_deals.attach_covers(deals, download=False)
+
+        save_cover.assert_not_called()
+        self.assertEqual(deals, [{"appid": 1159420, "cover": False}])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import html
 import json
+import os
 import re
 import time
 import urllib.parse
@@ -199,6 +200,22 @@ def save_cover(url: str | None, appid: int) -> bool:
         return target.exists()
 
 
+def attach_covers(deals: list[dict], *, download: bool = True) -> None:
+    if not download:
+        for game in deals:
+            game.pop("_coverUrl", None)
+            game["cover"] = False
+        return
+
+    def download_deal_cover(game: dict) -> tuple[int, bool]:
+        return game["appid"], save_cover(game.pop("_coverUrl"), game["appid"])
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        cover_results = dict(pool.map(download_deal_cover, deals))
+    for game in deals:
+        game["cover"] = cover_results.get(game["appid"], False)
+
+
 def published_deals_count() -> int:
     if not OUTPUT.exists():
         return 0
@@ -305,13 +322,8 @@ def main() -> None:
 
     validate_deals_completeness(len(deals), previous_count, "normalized deals")
 
-    def download_deal_cover(game: dict) -> tuple[int, bool]:
-        return game["appid"], save_cover(game.pop("_coverUrl"), game["appid"])
-
-    with ThreadPoolExecutor(max_workers=12) as pool:
-        cover_results = dict(pool.map(download_deal_cover, deals))
-    for game in deals:
-        game["cover"] = cover_results.get(game["appid"], False)
+    download_covers = os.environ.get("STEAM_DEALS_SKIP_COVERS") != "1"
+    attach_covers(deals, download=download_covers)
 
     deals.sort(key=lambda game: (-game["savingsMinor"], -game["discountPercent"], game["name"].casefold()))
     synced_at = datetime.now(timezone.utc).isoformat()
@@ -337,10 +349,11 @@ def main() -> None:
     temp = OUTPUT.with_suffix(".tmp")
     temp.write_text(source, encoding="utf-8")
     temp.replace(OUTPUT)
-    active_covers = {f"{game['appid']}.jpg" for game in deals if game["cover"]}
-    for cover in ASSETS.glob("*.jpg"):
-        if cover.name not in active_covers:
-            cover.unlink()
+    if download_covers:
+        active_covers = {f"{game['appid']}.jpg" for game in deals if game["cover"]}
+        for cover in ASSETS.glob("*.jpg"):
+            if cover.name not in active_covers:
+                cover.unlink()
     print(
         f"Steam Specials: {total_count} заявлено; {pages} стр.; {len(all_offers)} уникальных; "
         f"{len(deals)} игр со скидкой; {high_value_candidates} особо выгодных; {quality_candidates} выбор алгоритма; {synced_at}"

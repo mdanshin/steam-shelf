@@ -107,7 +107,7 @@ test('IndexedDB disconnect waits for one atomic transaction commit', async () =>
   await vault.saveCredentials({ steamId: '76561199999999999', apiKey: 'a'.repeat(32) });
   await vault.saveSnapshot('library', { resource: 'library', games: [], syncedAt: '2026-08-22T00:00:00.000Z' });
   await vault.saveSnapshot('wishlist', { resource: 'wishlist', games: [], syncedAt: '2026-08-22T00:00:00.000Z' });
-  assert.equal(fake.values.size, 3);
+  assert.equal(fake.values.size, 4); // credentials + cryptoKey + library snapshot + wishlist snapshot
   fake.abortNextWrites();
   await assert.rejects(() => vault.replaceConnection(
     { steamId: '76561199999999998', apiKey: 'b'.repeat(32) },
@@ -116,5 +116,23 @@ test('IndexedDB disconnect waits for one atomic transaction commit', async () =>
   assert.equal((await vault.credentials()).steamId, '76561199999999999');
   assert.notEqual(await vault.snapshot('wishlist'), null);
   await assert.rejects(() => vault.disconnect(), /forced abort/);
-  assert.equal(fake.values.size, 3);
+  assert.equal(fake.values.size, 4);
+});
+
+test('stored credentials are sealed with a non-extractable key, never written in the clear', async () => {
+  const storage = memoryStorage();
+  const vault = createVault('user-a', storage);
+  const apiKey = 'C'.repeat(32);
+  await vault.saveCredentials({ steamId: '76561199999999999', apiKey });
+  const sealed = await storage.get('steam-shelf:user:user-a:credentials');
+  assert.equal(sealed.iv instanceof Uint8Array, true);
+  assert.equal(sealed.ciphertext instanceof ArrayBuffer, true);
+  assert.equal(JSON.stringify({ iv: [...sealed.iv], ciphertext: [...new Uint8Array(sealed.ciphertext)] }).includes(apiKey), false);
+  const cryptoKey = await storage.get('steam-shelf:user:user-a:cryptoKey');
+  assert.equal(cryptoKey.extractable, false);
+  // The vault still round-trips normally through its own API.
+  assert.equal((await vault.credentials()).apiKey, apiKey);
+  // Tampering with the ciphertext (as if it were read off disk and altered) must not decrypt.
+  await storage.set('steam-shelf:user:user-a:credentials', { iv: sealed.iv, ciphertext: new Uint8Array(sealed.ciphertext).fill(0).buffer });
+  assert.equal(await vault.credentials(), null);
 });

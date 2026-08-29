@@ -1,24 +1,67 @@
 import { credentialScope, normalizeSyncSnapshot, validApiKey, validSteamId } from './core.js';
 
+const CREDENTIAL_KEY_ALGORITHM = { name: 'AES-GCM', length: 256 };
+
+// The Steam Web API key is the one secret this vault holds, so it is never written to
+// IndexedDB in the clear: it is sealed with a non-extractable AES-GCM key that is itself
+// persisted via the same storage abstraction (real IndexedDB natively supports storing
+// CryptoKey objects, and so does structuredClone in tests/Node). A non-extractable key
+// can be used to encrypt/decrypt but its raw bytes can never be read back out through the
+// storage layer — this mainly raises the bar against passive/offline inspection of the
+// browser profile; it does not defend against an attacker who already runs same-origin JS.
+async function loadCredentialKey(storage, key) {
+  return (await storage.get(key('cryptoKey'))) || null;
+}
+
+async function ensureCredentialKey(storage, key) {
+  const existing = await loadCredentialKey(storage, key);
+  if (existing) return existing;
+  const generated = await crypto.subtle.generateKey(CREDENTIAL_KEY_ALGORITHM, false, ['encrypt', 'decrypt']);
+  await storage.set(key('cryptoKey'), generated);
+  return generated;
+}
+
+async function sealCredentials(storage, key, credentials) {
+  const cryptoKey = await ensureCredentialKey(storage, key);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const plaintext = new TextEncoder().encode(JSON.stringify(credentials));
+  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, cryptoKey, plaintext);
+  return { iv, ciphertext };
+}
+
+async function unsealCredentials(storage, key, sealed) {
+  if (!sealed || !(sealed.iv instanceof Uint8Array) || !(sealed.ciphertext instanceof ArrayBuffer)) return null;
+  const cryptoKey = await loadCredentialKey(storage, key);
+  if (!cryptoKey) return null;
+  try {
+    const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: sealed.iv }, cryptoKey, sealed.ciphertext);
+    return JSON.parse(new TextDecoder().decode(plaintext));
+  } catch {
+    return null;
+  }
+}
+
 export function createVault(uid, storage) {
   const scope = credentialScope(uid);
   const key = (name) => `${scope}:${name}`;
   return {
     credentials: async () => {
-      const value = await storage.get(key('credentials'));
+      const sealed = await storage.get(key('credentials'));
+      const value = await unsealCredentials(storage, key, sealed);
       return validSteamId(value?.steamId) && validApiKey(value?.apiKey) ? { steamId: value.steamId, apiKey: value.apiKey } : null;
     },
     saveCredentials: async ({ steamId, apiKey }) => {
       if (!validSteamId(steamId)) throw new TypeError('Введите корректный SteamID64.');
       if (!validApiKey(apiKey)) throw new TypeError('Введите корректный Steam Web API key.');
-      await storage.set(key('credentials'), { steamId, apiKey });
+      await storage.set(key('credentials'), await sealCredentials(storage, key, { steamId, apiKey }));
     },
     replaceConnection: async ({ steamId, apiKey }, librarySnapshot) => {
       if (!validSteamId(steamId)) throw new TypeError('Введите корректный SteamID64.');
       if (!validApiKey(apiKey)) throw new TypeError('Введите корректный Steam Web API key.');
       const library = normalizeSyncSnapshot('library', librarySnapshot);
+      const sealed = await sealCredentials(storage, key, { steamId, apiKey });
       await storage.update({
-        set: [[key('credentials'), { steamId, apiKey }], [key('snapshot:library'), library]],
+        set: [[key('credentials'), sealed], [key('snapshot:library'), library]],
         delete: [key('snapshot:wishlist')],
       });
     },
@@ -31,7 +74,7 @@ export function createVault(uid, storage) {
       if (!['library', 'wishlist'].includes(resource)) throw new TypeError('Unsupported snapshot resource');
       await storage.set(key(`snapshot:${resource}`), normalizeSyncSnapshot(resource, snapshot));
     },
-    disconnect: async () => storage.update({ delete: [key('credentials'), key('snapshot:library'), key('snapshot:wishlist')] }),
+    disconnect: async () => storage.update({ delete: [key('credentials'), key('cryptoKey'), key('snapshot:library'), key('snapshot:wishlist')] }),
   };
 }
 

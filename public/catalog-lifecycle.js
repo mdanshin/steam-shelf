@@ -1,3 +1,7 @@
+export function currentDeals(games, nowSeconds = Date.now() / 1000) {
+  return games.filter((game) => !Number.isFinite(game.discountEndAt) || game.discountEndAt > nowSeconds);
+}
+
 export function createCatalogLifecycle() {
   const catalogs = new Map();
   let personalRevision = 0;
