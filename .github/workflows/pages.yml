@@ -31,6 +31,7 @@ jobs:
         run: |
           npm ci
           npm test
+          sudo python -m unittest test.test_deploy_config.DeployConfigTests.test_runtime_integrity_allows_internal_symlinks_and_rejects_extra_entries
           npm run sync:deals
           npm run build:client
       - name: Configure Pages

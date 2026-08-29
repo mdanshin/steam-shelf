@@ -1,6 +1,7 @@
 import json
 import io
 import importlib.util
+import os
 import pathlib
 import subprocess
 import sys
@@ -190,6 +191,8 @@ class DeployConfigTests(unittest.TestCase):
         self.assertGreaterEqual(rollback.count('sync -f "$ROOT"'), 2)
 
     def test_runtime_integrity_allows_internal_symlinks_and_rejects_extra_entries(self):
+        if getattr(os, "geteuid", lambda: -1)() != 0:
+            self.skipTest("runtime ownership verification requires root")
         helper = ROOT / "deploy/runtime_integrity.py"
         with tempfile.TemporaryDirectory() as directory:
             runtime_root = pathlib.Path(directory) / "runtimes"
