@@ -10,8 +10,7 @@ class PagesWorkflowTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/pages.yml").read_text(encoding="utf-8")
 
         self.assertIn(
-            "sudo python -m unittest test.test_deploy_config.DeployConfigTests."
-            "test_runtime_integrity_allows_internal_symlinks_and_rejects_extra_entries",
+            "sudo python -m unittest discover -s test -p 'test_deploy_config.py'",
             workflow,
         )
 
