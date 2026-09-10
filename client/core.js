@@ -1,4 +1,12 @@
 export const validSteamId = (value) => /^7656119\d{10}$/.test(String(value));
+// Keeps only ASCII digits: strips spaces, "Steam ID:" prefixes, NBSP/zero-width characters that mobile paste adds.
+export const normalizeSteamId = (value) => String(value ?? '').replace(/[^0-9]/g, '');
+export function steamIdProblem(value) {
+  const digits = normalizeSteamId(value);
+  if (!digits || validSteamId(digits)) return '';
+  if (digits.length !== 17) return `Введено ${digits.length} цифр из 17.`;
+  return 'SteamID64 должен начинаться с 7656119.';
+}
 export const validApiKey = (value) => /^[A-F0-9]{32}$/i.test(String(value));
 
 export function credentialScope(uid) {

@@ -1,6 +1,13 @@
 import { createCatalogLifecycle, currentDeals } from './catalog-lifecycle.js';
 
 const $ = (selector) => document.querySelector(selector);
+const normalizeSteamId = (value) => String(value ?? '').replace(/[^0-9]/g, '');
+function steamIdProblem(value) {
+  const digits = normalizeSteamId(value);
+  if (!digits || /^7656119\d{10}$/.test(digits)) return '';
+  if (digits.length !== 17) return `Введено ${digits.length} цифр из 17.`;
+  return 'SteamID64 должен начинаться с 7656119.';
+}
 const lifecycle = createCatalogLifecycle();
 const state = { me: null, view: 'library', catalogs: lifecycle.catalogs, query: '', sort: 'playtime' };
 const viewMeta = {
@@ -167,12 +174,13 @@ window.addEventListener('hashchange', () => loadView(location.hash.slice(1)));
 $('#search').addEventListener('input', (event) => { state.query = event.target.value; renderCatalog(); });
 $('#sort').addEventListener('change', (event) => { state.sort = event.target.value; renderCatalog(); });
 $('#sync').addEventListener('click', syncCurrent);
+$('#steam-id').addEventListener('input', (event) => { const digits = normalizeSteamId(event.target.value); if (event.target.value !== digits) event.target.value = digits; event.target.setCustomValidity(steamIdProblem(digits)); });
 $('#logout').addEventListener('click', async () => { try { await api('/api/logout', { method: 'POST' }); location.reload(); } catch (error) { flash(error.message, true); } });
 $('#settings-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const submit = event.submitter; submit.disabled = true;
   try {
-    await api('/api/settings', { method: 'POST', body: JSON.stringify({ steamId: $('#steam-id').value.trim(), apiKey: $('#api-key').value.trim() }) });
+    await api('/api/settings', { method: 'POST', body: JSON.stringify({ steamId: normalizeSteamId($('#steam-id').value), apiKey: $('#api-key').value.trim() }) });
     const me = await api('/api/me'); state.me = me; $('#api-key').value = ''; $('#api-key-status').textContent = `Сохранён: ${me.settings.apiKeyMask}`;
     lifecycle.invalidatePersonal(); flash('Steam подключён. Теперь можно синхронизировать коллекцию.');
   } catch (error) { flash(error.message, true); } finally { submit.disabled = false; }

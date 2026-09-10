@@ -1,7 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
 
-import { currentDeals, normalizeSyncSnapshot, validApiKey, validSteamId } from './core.js';
+import { currentDeals, normalizeSteamId, normalizeSyncSnapshot, steamIdProblem, validApiKey, validSteamId } from './core.js';
 import { createGatewaySync } from './gateway.js';
 import { beginSessionTransition, captureSession, isCurrentSession, transitionForCredentialReplacement, transitionForDisconnect } from './session.js';
 import { createIndexedDbStorage, createVault } from './vault.js';
@@ -139,8 +139,9 @@ window.addEventListener('hashchange', () => state.user && loadView(location.hash
 $('#search').addEventListener('input', (event) => { state.query = event.target.value; renderCatalog(); });
 $('#sort').addEventListener('change', (event) => { state.sort = event.target.value; renderCatalog(); });
 $('#sync').addEventListener('click', syncCurrent);
+$('#steam-id').addEventListener('input', (event) => { const digits = normalizeSteamId(event.target.value); if (event.target.value !== digits) event.target.value = digits; event.target.setCustomValidity(steamIdProblem(digits)); });
 $('#settings-form').addEventListener('submit', async (event) => {
-  event.preventDefault(); const current = captureSession(state); if (!current) return; const submit = event.submitter; const steamId = $('#steam-id').value.trim(); const enteredKey = $('#api-key').value.trim(); const apiKey = enteredKey || current.credentials?.apiKey || '';
+  event.preventDefault(); const current = captureSession(state); if (!current) return; const submit = event.submitter; const steamId = normalizeSteamId($('#steam-id').value); const enteredKey = $('#api-key').value.trim(); const apiKey = enteredKey || current.credentials?.apiKey || '';
   if (!validSteamId(steamId) || !validApiKey(apiKey)) { flash('Проверьте SteamID64 и API key.', true); return; }
   const session = transitionForCredentialReplacement(state); if (!session) return; resetControls(); $('#sync').disabled = true;
   submit.disabled = true;
