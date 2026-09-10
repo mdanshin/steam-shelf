@@ -4,7 +4,9 @@ import assert from 'node:assert/strict';
 import {
   credentialScope,
   currentDeals,
+  normalizeSteamId,
   normalizeSyncSnapshot,
+  steamIdProblem,
   validApiKey,
   validSteamId,
 } from '../client/core.js';
@@ -14,6 +16,17 @@ test('credential validation accepts only SteamID64 and 32 hex key', () => {
   assert.equal(validSteamId('7656119999999999'), false);
   assert.equal(validApiKey('A'.repeat(32)), true);
   assert.equal(validApiKey('not-a-key'), false);
+});
+
+test('SteamID64 input is normalized to digits and explains what is wrong', () => {
+  assert.equal(normalizeSteamId(' 7656119\u00a0999 9999999\u200b\n'), '76561199999999999');
+  assert.equal(normalizeSteamId('Steam ID: 76561199999999999'), '76561199999999999');
+  assert.equal(normalizeSteamId(null), '');
+  assert.equal(steamIdProblem(''), '');
+  assert.equal(steamIdProblem('76561199999999999'), '');
+  assert.equal(steamIdProblem('7656119802401037'), 'Введено 16 цифр из 17.');
+  assert.equal(steamIdProblem('765611998024010370'), 'Введено 18 цифр из 17.');
+  assert.equal(steamIdProblem('12345678901234567'), 'SteamID64 должен начинаться с 7656119.');
 });
 
 test('credential scope is stable and isolated by Firebase uid', () => {
