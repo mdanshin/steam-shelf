@@ -83,6 +83,75 @@ class SearchRowTests(unittest.TestCase):
         self.assertEqual(parsed[0]["reviewPercent"], 91)
 
 
+class WatchlistTests(unittest.TestCase):
+    ITEM = {
+        "appid": 447700, "name": "Crystal Crisis", "type": 0, "visible": True, "tags": [],
+        "best_purchase_option": {
+            "packageid": 1821396, "final_price_in_cents": "0",
+            "original_price_in_cents": "63500", "discount_pct": 100,
+            "is_free_to_keep": True, "free_to_keep_ends": 1790060340,
+        },
+    }
+
+    def test_free_to_keep_promotion_normalizes_without_a_search_row(self):
+        game = sync_deals.normalize_store_item(self.ITEM, None, {})
+        self.assertEqual(game["appid"], 447700)
+        self.assertEqual(game["priceMinor"], 0)
+        self.assertEqual(game["originalPriceMinor"], 63500)
+        self.assertEqual(game["savingsMinor"], 63500)
+        self.assertEqual(game["discountPercent"], 100)
+        # Free-to-keep offers carry no active_discounts, only free_to_keep_ends.
+        self.assertEqual(game["discountEndAt"], 1790060340)
+        self.assertIsNone(game["reviewPercent"])
+        self.assertFalse(game["qualityMatch"])
+        # The 635 rouble list price is below the 1500 rouble high-value floor, so the
+        # flag stays off. Flags only badge an entry; they never gate publication.
+        self.assertFalse(game["highValueMatch"])
+
+    def test_watchlist_file_is_read_and_tolerates_absence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "watchlist.json"
+            with mock.patch.object(sync_deals, "WATCHLIST", path):
+                self.assertEqual(sync_deals.watchlist_appids(), set())
+                path.write_text('{"appids": [447700, "123", "nope"]}', encoding="utf-8")
+                self.assertEqual(sync_deals.watchlist_appids(), {447700, 123})
+
+    def test_shipped_watchlist_is_valid_and_carries_the_reported_game(self):
+        self.assertIn(447700, sync_deals.watchlist_appids())
+
+    def test_watchlist_entry_absent_from_specials_still_reaches_the_catalog(self):
+        specials_rows = [{"appid": 10, "itemKey": "App_10", "name": "Other", "discountPercent": 50,
+                          "roughOriginalMinor": None, "roughPriceMinor": None,
+                          "reviewPercent": 90, "reviewCount": 20000, "url": "u"}]
+        specials_item = {"appid": 10, "name": "Other", "type": 0, "visible": True, "tags": [],
+                         "best_purchase_option": {"original_price_in_cents": 20000,
+                                                  "final_price_in_cents": 10000, "discount_pct": 50}}
+
+        def browse(appids):
+            return [self.ITEM] if list(appids) == [447700] else [specials_item]
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "deals-data.js"
+            watchlist = Path(directory) / "watchlist.json"
+            watchlist.write_text('{"appids": [447700]}', encoding="utf-8")
+            with mock.patch.object(sync_deals, "OUTPUT", output), \
+                    mock.patch.object(sync_deals, "WATCHLIST", watchlist), \
+                    mock.patch.object(sync_deals, "MIN_DEALS_ITEMS", 1), \
+                    mock.patch.object(sync_deals, "fetch_json", return_value={"total_count": 1, "results_html": "x"}), \
+                    mock.patch.object(sync_deals, "parse_rows", return_value=specials_rows), \
+                    mock.patch.object(sync_deals, "official_genre_tags", return_value={}), \
+                    mock.patch.object(sync_deals, "browse_items", side_effect=browse), \
+                    mock.patch.dict(sync_deals.os.environ, {"STEAM_DEALS_SKIP_COVERS": "1"}), \
+                    mock.patch.object(sync_deals.time, "sleep"):
+                sync_deals.main()
+            published = output.read_text(encoding="utf-8")
+        self.assertIn('"appid": 447700', published)
+        self.assertIn('"discountPercent": 100', published)
+        self.assertIn('"watchlistDeals": 1', published)
+        # Sorted by savings, the giveaway outranks the ordinary 50% offer.
+        self.assertLess(published.index('"appid": 447700'), published.index('"appid": 10'))
+
+
 class CompletenessTests(unittest.TestCase):
     def test_each_stage_fails_closed_on_its_own_collapse(self):
         with self.assertRaisesRegex(RuntimeError, "offers catalog is too small"):

@@ -44,6 +44,7 @@ ALLOWED_HOSTS = {
 MAX_RESPONSE_BYTES = 10 * 1024 * 1024
 MIN_DEALS_ITEMS = 700
 MIN_DETAIL_COVERAGE_PERCENT = 50
+WATCHLIST = ROOT / "data" / "free-to-keep-watchlist.json"
 
 
 def validate_url(url: str) -> None:
@@ -276,6 +277,61 @@ def validate_published_volume(normalized: int) -> None:
         )
 
 
+def watchlist_appids() -> set[int]:
+    """Appids to read directly from the store, regardless of the Specials scrape."""
+    if not WATCHLIST.exists():
+        return set()
+    entries = json.loads(WATCHLIST.read_text(encoding="utf-8")).get("appids", [])
+    return {int(entry) for entry in entries if str(entry).isdigit()}
+
+
+def normalize_store_item(item: dict, offer: dict | None, genre_tags: dict[int, str]) -> dict | None:
+    """Turn one store item into a published deal, or None when it is not one.
+
+    `offer` carries review counts scraped from the search row and is absent for
+    watchlist entries, which never appear in search results.
+    """
+    appid = int(item.get("appid") or 0)
+    option = item.get("best_purchase_option") or {}
+    prices = option_prices(option)
+    if prices is None or appid <= 0 or item.get("type") != 0 or not item.get("visible"):
+        return None
+    current, original, discount_percent = prices
+    savings = original - current
+    high_value = discount_percent >= MIN_DISCOUNT and savings >= MIN_SAVINGS and original >= MIN_ORIGINAL
+    review_percent = offer["reviewPercent"] if offer else None
+    review_count = offer["reviewCount"] if offer else None
+    end_dates = [
+        int(active["discount_end_date"])
+        for active in option.get("active_discounts", [])
+        if str(active.get("discount_end_date", "")).isdigit()
+    ]
+    # A free-to-keep promotion carries its deadline here instead.
+    if str(option.get("free_to_keep_ends", "")).isdigit():
+        end_dates.append(int(option["free_to_keep_ends"]))
+    return {
+        "appid": appid,
+        "name": item.get("name") or (offer["name"] if offer else f"Steam App {appid}"),
+        "url": f"https://store.steampowered.com/app/{appid}/",
+        "priceMinor": current,
+        "originalPriceMinor": original,
+        "savingsMinor": savings,
+        "discountPercent": discount_percent,
+        "currency": "RUB",
+        "reviewPercent": review_percent,
+        "reviewCount": review_count,
+        "genres": [
+            genre_tags[int(tag["tagid"])]
+            for tag in item.get("tags", [])
+            if str(tag.get("tagid", "")).isdigit() and int(tag["tagid"]) in genre_tags
+        ],
+        "highValueMatch": high_value,
+        "qualityMatch": high_value and quality_pass(review_percent, review_count),
+        "discountEndAt": min(end_dates) if end_dates else None,
+        "_coverUrl": item_cover_url(item),
+    }
+
+
 def main() -> None:
     all_offers: dict[str, dict] = {}
     total_count: int | None = None
@@ -320,50 +376,29 @@ def main() -> None:
     validate_detail_coverage(len(store_items), len(appids))
 
     deals = []
-    high_value_candidates = 0
-    quality_candidates = 0
+    seen_appids = set()
     for item in store_items:
-        appid = int(item.get("appid") or 0)
-        offer = offers_by_appid.get(appid)
-        option = item.get("best_purchase_option") or {}
-        prices = option_prices(option)
-        if prices is None or not offer or item.get("type") != 0 or not item.get("visible"):
-            continue
-        current, original, discount_percent = prices
-        savings = original - current
-        high_value = discount_percent >= MIN_DISCOUNT and savings >= MIN_SAVINGS and original >= MIN_ORIGINAL
-        quality_match = high_value and quality_pass(offer["reviewPercent"], offer["reviewCount"])
-        genres = [
-            genre_tags[int(tag["tagid"])]
-            for tag in item.get("tags", [])
-            if str(tag.get("tagid", "")).isdigit() and int(tag["tagid"]) in genre_tags
-        ]
-        high_value_candidates += int(high_value)
-        quality_candidates += int(quality_match)
-        end_dates = [
-            int(active["discount_end_date"])
-            for active in option.get("active_discounts", [])
-            if str(active.get("discount_end_date", "")).isdigit()
-        ]
-        deals.append({
-            "appid": appid,
-            "name": item.get("name") or offer["name"],
-            "url": f"https://store.steampowered.com/app/{appid}/",
-            "priceMinor": current,
-            "originalPriceMinor": original,
-            "savingsMinor": savings,
-            "discountPercent": discount_percent,
-            "currency": "RUB",
-            "reviewPercent": offer["reviewPercent"],
-            "reviewCount": offer["reviewCount"],
-            "genres": genres,
-            "highValueMatch": high_value,
-            "qualityMatch": quality_match,
-            "discountEndAt": min(end_dates) if end_dates else None,
-            "_coverUrl": item_cover_url(item),
-        })
+        game = normalize_store_item(item, offers_by_appid.get(int(item.get("appid") or 0)), genre_tags)
+        if game:
+            deals.append(game)
+            seen_appids.add(game["appid"])
 
     validate_published_volume(len(deals))
+
+    # Steam's Specials listing never carries free-to-keep giveaways: they top out
+    # at 95% off there. The store item itself reports them correctly, so watched
+    # appids are read directly and merged in when they are currently discounted.
+    watchlist_deals = []
+    for appid in watchlist_appids() - seen_appids:
+        for item in browse_items([appid]):
+            game = normalize_store_item(item, None, genre_tags)
+            if game:
+                watchlist_deals.append(game)
+        time.sleep(0.4)
+    deals.extend(watchlist_deals)
+
+    high_value_candidates = sum(game["highValueMatch"] for game in deals)
+    quality_candidates = sum(game["qualityMatch"] for game in deals)
 
     download_covers = os.environ.get("STEAM_DEALS_SKIP_COVERS") != "1"
     attach_covers(deals, download=download_covers)
@@ -376,6 +411,7 @@ def main() -> None:
         "uniqueOffers": len(all_offers),
         "uniqueApps": len(appids),
         "detailedApps": len(store_items),
+        "watchlistDeals": len(watchlist_deals),
         "exactPriceCandidates": len(deals),
         "highValueCandidates": high_value_candidates,
         "qualityCandidates": quality_candidates,
