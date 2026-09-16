@@ -137,6 +137,79 @@ class PaginationTests(unittest.TestCase):
             self.assertEqual(output.read_text(encoding="utf-8"), "last-known-good")
 
 
+class FullSweepTests(unittest.TestCase):
+    def test_catalog_enumeration_paginates_and_dedupes(self):
+        pages = [
+            {"response": {"ids": [{"appid": 1}, {"appid": 2}], "metadata": {"total_matching_records": 3}}},
+            {"response": {"ids": [{"appid": 2}, {"appid": 3}], "metadata": {"total_matching_records": 3}}},
+            {"response": {"ids": [], "metadata": {"total_matching_records": 3}}},
+        ]
+        with mock.patch.object(sync_deals, "CATALOG_PAGE_SIZE", 2), \
+                mock.patch.object(sync_deals, "fetch_json", side_effect=pages), \
+                mock.patch.object(sync_deals.time, "sleep"):
+            self.assertEqual(sync_deals.enumerate_catalog_appids(), [1, 2, 3])
+
+    def test_enumeration_stops_on_an_empty_or_unreported_page(self):
+        with mock.patch.object(sync_deals, "fetch_json", return_value={"response": {}}), \
+                mock.patch.object(sync_deals.time, "sleep"):
+            self.assertEqual(sync_deals.enumerate_catalog_appids(), [])
+
+    def test_full_sweep_can_be_switched_off(self):
+        with mock.patch.dict(sync_deals.os.environ, {"STEAM_DEALS_SKIP_FULL_SWEEP": "1"}):
+            self.assertFalse(sync_deals.full_sweep_enabled())
+        with mock.patch.dict(sync_deals.os.environ, {}, clear=True):
+            self.assertTrue(sync_deals.full_sweep_enabled())
+
+    def test_giveaway_absent_from_specials_is_found_without_a_watchlist(self):
+        """The whole point: a 100% offer nobody told the pipeline about."""
+        specials_rows = [{"appid": 10, "itemKey": "App_10", "name": "Other", "discountPercent": 50,
+                          "roughOriginalMinor": None, "roughPriceMinor": None,
+                          "reviewPercent": 90, "reviewCount": 20000, "url": "u"}]
+        priced = {
+            10: {"appid": 10, "name": "Other", "type": 0, "visible": True, "tags": [],
+                 "best_purchase_option": {"original_price_in_cents": 20000,
+                                          "final_price_in_cents": 10000, "discount_pct": 50}},
+            999: {"appid": 999, "name": "Surprise Giveaway", "type": 0, "visible": True, "tags": [],
+                  "best_purchase_option": {"original_price_in_cents": 99900, "final_price_in_cents": "0",
+                                           "discount_pct": 100, "is_free_to_keep": True,
+                                           "free_to_keep_ends": 1790000000}},
+            777: {"appid": 777, "name": "Full Price", "type": 0, "visible": True, "tags": [],
+                  "best_purchase_option": {"original_price_in_cents": 50000,
+                                           "final_price_in_cents": 50000, "discount_pct": 0}},
+        }
+
+        def fetch_json(url):
+            if "IStoreQueryService" in url:
+                return {"response": {"ids": [{"appid": 10}, {"appid": 999}, {"appid": 777}],
+                                     "metadata": {"total_matching_records": 3}}}
+            return {"total_count": 1, "results_html": "x"}
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "deals-data.js"
+            watchlist = Path(directory) / "watchlist.json"
+            watchlist.write_text('{"appids": []}', encoding="utf-8")
+            with mock.patch.object(sync_deals, "OUTPUT", output), \
+                    mock.patch.object(sync_deals, "WATCHLIST", watchlist), \
+                    mock.patch.object(sync_deals, "MIN_DEALS_ITEMS", 1), \
+                    mock.patch.object(sync_deals, "fetch_json", side_effect=fetch_json), \
+                    mock.patch.object(sync_deals, "parse_rows", return_value=specials_rows), \
+                    mock.patch.object(sync_deals, "official_genre_tags", return_value={}), \
+                    mock.patch.object(sync_deals, "browse_items",
+                                      side_effect=lambda ids: [priced[i] for i in ids if i in priced]), \
+                    mock.patch.dict(sync_deals.os.environ, {"STEAM_DEALS_SKIP_COVERS": "1"}), \
+                    mock.patch.object(sync_deals.time, "sleep"):
+                sync_deals.main()
+            published = output.read_text(encoding="utf-8")
+
+        # Found purely by sweeping the catalogue, with no watchlist entry.
+        self.assertIn('"appid": 999', published)
+        self.assertIn('"discountPercent": 100', published)
+        self.assertIn('"catalogApps": 3', published)
+        # The ordinary discount is still there, the undiscounted app is not.
+        self.assertIn('"appid": 10', published)
+        self.assertNotIn('"appid": 777', published)
+
+
 class WatchlistTests(unittest.TestCase):
     ITEM = {
         "appid": 447700, "name": "Crystal Crisis", "type": 0, "visible": True, "tags": [],
