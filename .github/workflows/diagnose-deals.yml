@@ -1,0 +1,29 @@
+name: Diagnose Steam deals
+
+on:
+  workflow_dispatch:
+    inputs:
+      appids:
+        description: Steam appids to inspect, comma separated
+        required: false
+        default: '447700'
+      term:
+        description: Store search term used to locate the app
+        required: false
+        default: 'Crystal Crisis'
+
+permissions: {}
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Inspect what Steam returns
+        env:
+          DIAGNOSE_APPIDS: ${{ inputs.appids }}
+          DIAGNOSE_TERM: ${{ inputs.term }}
+        run: python scripts/diagnose_deals.py
