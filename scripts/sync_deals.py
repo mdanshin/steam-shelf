@@ -45,6 +45,9 @@ MAX_RESPONSE_BYTES = 10 * 1024 * 1024
 MIN_DEALS_ITEMS = 700
 MIN_DETAIL_COVERAGE_PERCENT = 50
 PAGINATION_TOLERANCE_PERCENT = 90
+QUERY_URL = "https://api.steampowered.com/IStoreQueryService/Query/v1/"
+CATALOG_PAGE_SIZE = 1000
+PRICE_BATCH = 200
 WATCHLIST = ROOT / "data" / "free-to-keep-watchlist.json"
 
 
@@ -278,6 +281,35 @@ def validate_published_volume(normalized: int) -> None:
         )
 
 
+def enumerate_catalog_appids() -> list[int]:
+    """Every appid Steam's store knows about.
+
+    The Specials listing hides free-to-keep giveaways entirely, and no search
+    filter reaches them, so the only way to find one without being told its appid
+    is to price the whole catalogue.
+    """
+    appids: set[int] = set()
+    total: int | None = None
+    start = 0
+    while total is None or start < total:
+        payload = {
+            "query": {"filters": {}, "start": start, "count": CATALOG_PAGE_SIZE},
+            "context": {"language": "russian", "country_code": "RU"},
+            "data_request": {},
+        }
+        params = urllib.parse.urlencode({"input_json": json.dumps(payload, separators=(",", ":"))})
+        response = fetch_json(f"{QUERY_URL}?{params}").get("response", {})
+        ids = [int(entry.get("appid") or 0) for entry in response.get("ids", [])]
+        reported = int((response.get("metadata") or {}).get("total_matching_records") or 0)
+        if not ids or reported <= 0:
+            break
+        total = max(total or 0, reported)
+        appids.update(appid for appid in ids if appid > 0)
+        start += CATALOG_PAGE_SIZE
+        time.sleep(0.2)
+    return sorted(appids)
+
+
 def pagination_may_stop(start: int, collected: int, total_count: int) -> bool:
     """Whether an empty results page means the listing ended rather than broke.
 
@@ -286,6 +318,10 @@ def pagination_may_stop(start: int, collected: int, total_count: int) -> bool:
     entries short of the reported total.
     """
     return start + PAGE_SIZE >= total_count or collected * 100 >= total_count * PAGINATION_TOLERANCE_PERCENT
+
+
+def full_sweep_enabled() -> bool:
+    return os.environ.get("STEAM_DEALS_SKIP_FULL_SWEEP") != "1"
 
 
 def watchlist_appids() -> set[int]:
@@ -385,23 +421,28 @@ def main() -> None:
 
     validate_offer_volume(len(offers_by_appid))
 
-    store_items = []
-    appids = sorted(offers_by_appid)
     genre_tags = official_genre_tags()
-    for offset in range(0, len(appids), 50):
-        store_items.extend(browse_items(appids[offset:offset + 50]))
-        time.sleep(0.4)
+    catalog_appids = enumerate_catalog_appids() if full_sweep_enabled() else []
+    appids = sorted(set(offers_by_appid) | set(catalog_appids))
 
-    validate_detail_coverage(len(store_items), len(appids))
-
+    # Priced in batches and normalized as they arrive: holding a few hundred
+    # thousand raw store items in memory at once is needless.
     deals = []
-    seen_appids = set()
-    for item in store_items:
-        game = normalize_store_item(item, offers_by_appid.get(int(item.get("appid") or 0)), genre_tags)
-        if game:
-            deals.append(game)
-            seen_appids.add(game["appid"])
+    seen_appids: set[int] = set()
+    detailed = 0
+    for offset in range(0, len(appids), PRICE_BATCH):
+        for item in browse_items(appids[offset:offset + PRICE_BATCH]):
+            detailed += 1
+            appid = int(item.get("appid") or 0)
+            if appid in seen_appids:
+                continue
+            game = normalize_store_item(item, offers_by_appid.get(appid), genre_tags)
+            if game:
+                deals.append(game)
+                seen_appids.add(game["appid"])
+        time.sleep(0.2)
 
+    validate_detail_coverage(detailed, len(appids))
     validate_published_volume(len(deals))
 
     # Steam's Specials listing never carries free-to-keep giveaways: they top out
@@ -429,7 +470,8 @@ def main() -> None:
         "pages": pages,
         "uniqueOffers": len(all_offers),
         "uniqueApps": len(appids),
-        "detailedApps": len(store_items),
+        "catalogApps": len(catalog_appids),
+        "detailedApps": detailed,
         "watchlistDeals": len(watchlist_deals),
         "exactPriceCandidates": len(deals),
         "highValueCandidates": high_value_candidates,
