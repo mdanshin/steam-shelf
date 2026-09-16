@@ -1,0 +1,4 @@
+{
+  "comment": "Appids read straight from the Steam store on every sync. Steam's Specials listing never carries free-to-keep giveaways, so a 100% offer can only reach the site through this list. Add an appid to have it checked; entries that are not currently discounted are simply skipped.",
+  "appids": [447700]
+}
