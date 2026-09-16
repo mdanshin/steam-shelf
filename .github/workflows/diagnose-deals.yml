@@ -27,3 +27,7 @@ jobs:
           DIAGNOSE_APPIDS: ${{ inputs.appids }}
           DIAGNOSE_TERM: ${{ inputs.term }}
         run: python scripts/diagnose_deals.py
+      - name: Verify what the deployed site actually serves
+        env:
+          VERIFY_APPIDS: ${{ inputs.appids }}
+        run: python scripts/verify_published_deals.py
