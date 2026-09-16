@@ -44,6 +44,7 @@ ALLOWED_HOSTS = {
 MAX_RESPONSE_BYTES = 10 * 1024 * 1024
 MIN_DEALS_ITEMS = 700
 MIN_DETAIL_COVERAGE_PERCENT = 50
+PAGINATION_TOLERANCE_PERCENT = 90
 WATCHLIST = ROOT / "data" / "free-to-keep-watchlist.json"
 
 
@@ -277,6 +278,16 @@ def validate_published_volume(normalized: int) -> None:
         )
 
 
+def pagination_may_stop(start: int, collected: int, total_count: int) -> bool:
+    """Whether an empty results page means the listing ended rather than broke.
+
+    Steam reports total_count as a live estimate. A full scrape takes minutes, and
+    offers expire during it, so the final page routinely comes back empty a few
+    entries short of the reported total.
+    """
+    return start + PAGE_SIZE >= total_count or collected * 100 >= total_count * PAGINATION_TOLERANCE_PERCENT
+
+
 def watchlist_appids() -> set[int]:
     """Appids to read directly from the store, regardless of the Specials scrape."""
     if not WATCHLIST.exists():
@@ -337,6 +348,7 @@ def main() -> None:
     total_count: int | None = None
     pages = 0
     start = 0
+    exhausted = False
     while total_count is None or start < total_count:
         params = urllib.parse.urlencode({
             "query": "", "start": start, "count": PAGE_SIZE, "dynamic_data": "",
@@ -350,6 +362,13 @@ def main() -> None:
         total_count = max(total_count or 0, reported)
         rows = parse_rows(payload.get("results_html", ""))
         if not rows:
+            # total_count is a live estimate and the catalogue shifts while a full
+            # scrape runs for several minutes, so the last page can come back empty
+            # a few entries short. Only an empty page well before the end means the
+            # scrape actually broke.
+            if pagination_may_stop(start, len(all_offers), total_count):
+                exhausted = True
+                break
             raise RuntimeError(f"Steam pagination ended early at {start}/{total_count}")
         for row in rows:
             all_offers[row["itemKey"]] = row
@@ -357,7 +376,7 @@ def main() -> None:
         start += PAGE_SIZE
         time.sleep(0.75)
 
-    if start < total_count:
+    if not exhausted and start < total_count:
         raise RuntimeError(f"Steam pagination incomplete: {start}/{total_count}")
 
     offers_by_appid = {}

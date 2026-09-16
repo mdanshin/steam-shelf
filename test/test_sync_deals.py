@@ -83,6 +83,60 @@ class SearchRowTests(unittest.TestCase):
         self.assertEqual(parsed[0]["reviewPercent"], 91)
 
 
+class PaginationTests(unittest.TestCase):
+    def test_short_final_page_is_the_end_not_a_break(self):
+        # The real failure: Steam reported 9604 offers and served 9600.
+        self.assertTrue(sync_deals.pagination_may_stop(9600, 9600, 9604))
+        # An empty page a long way from the end is a broken scrape.
+        self.assertFalse(sync_deals.pagination_may_stop(3000, 3000, 9604))
+        # So is one that is short by far more than a page, unless most of the
+        # catalogue was already collected.
+        self.assertFalse(sync_deals.pagination_may_stop(5000, 5000, 9604))
+        self.assertTrue(sync_deals.pagination_may_stop(8700, 8700, 9604))
+
+    def test_scrape_completes_when_the_last_page_comes_back_empty(self):
+        rows = [{"appid": index, "itemKey": f"App_{index}", "name": f"Game {index}",
+                 "discountPercent": 50, "roughOriginalMinor": None, "roughPriceMinor": None,
+                 "reviewPercent": 90, "reviewCount": 20000, "url": "u"} for index in range(1, 101)]
+        def browse(appids):
+            return [{"appid": appid, "name": f"Game {appid}", "type": 0, "visible": True, "tags": [],
+                     "best_purchase_option": {"original_price_in_cents": 20000,
+                                              "final_price_in_cents": 10000, "discount_pct": 50}}
+                    for appid in appids]
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "deals-data.js"
+            watchlist = Path(directory) / "watchlist.json"
+            watchlist.write_text('{"appids": []}', encoding="utf-8")
+            with mock.patch.object(sync_deals, "OUTPUT", output), \
+                    mock.patch.object(sync_deals, "WATCHLIST", watchlist), \
+                    mock.patch.object(sync_deals, "MIN_DEALS_ITEMS", 1), \
+                    mock.patch.object(sync_deals, "fetch_json", return_value={"total_count": 104, "results_html": "x"}), \
+                    mock.patch.object(sync_deals, "parse_rows", side_effect=[rows, []]), \
+                    mock.patch.object(sync_deals, "official_genre_tags", return_value={}), \
+                    mock.patch.object(sync_deals, "browse_items", side_effect=browse), \
+                    mock.patch.dict(sync_deals.os.environ, {"STEAM_DEALS_SKIP_COVERS": "1"}), \
+                    mock.patch.object(sync_deals.time, "sleep"):
+                sync_deals.main()
+            self.assertIn('"appid": 1', output.read_text(encoding="utf-8"))
+
+    def test_empty_page_far_from_the_end_still_fails_closed(self):
+        rows = [{"appid": index, "itemKey": f"App_{index}", "name": f"Game {index}",
+                 "discountPercent": 50, "roughOriginalMinor": None, "roughPriceMinor": None,
+                 "reviewPercent": 90, "reviewCount": 20000, "url": "u"} for index in range(1, 101)]
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "deals-data.js"
+            output.write_text("last-known-good", encoding="utf-8")
+            with mock.patch.object(sync_deals, "OUTPUT", output), \
+                    mock.patch.object(sync_deals, "fetch_json", return_value={"total_count": 5000, "results_html": "x"}), \
+                    mock.patch.object(sync_deals, "parse_rows", side_effect=[rows, []]), \
+                    mock.patch.object(sync_deals, "browse_items") as browse, \
+                    mock.patch.object(sync_deals.time, "sleep"):
+                with self.assertRaisesRegex(RuntimeError, "pagination ended early"):
+                    sync_deals.main()
+            browse.assert_not_called()
+            self.assertEqual(output.read_text(encoding="utf-8"), "last-known-good")
+
+
 class WatchlistTests(unittest.TestCase):
     ITEM = {
         "appid": 447700, "name": "Crystal Crisis", "type": 0, "visible": True, "tags": [],
