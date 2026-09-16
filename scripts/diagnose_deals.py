@@ -1,8 +1,9 @@
 #!/usr/bin/env python
-"""Find which Steam query surfaces a given app, and what its search row looks like.
+"""Hunt for a Steam source that lists free-to-keep promotions.
 
-Runs inside CI, where Steam is reachable. Output is compact and printed at the
-end of the job so it survives log tailing.
+Store search returns nothing for them, so this probes alternative discovery
+endpoints. Runs in CI, where Steam is reachable. Output is compact and printed
+at the end of the job so it survives log tailing.
 """
 
 from __future__ import annotations
@@ -20,80 +21,85 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(sync_deals)
 
 APPIDS = [int(part) for part in re.findall(r"\d+", os.environ.get("DIAGNOSE_APPIDS", "447700"))]
-TERM = os.environ.get("DIAGNOSE_TERM", "Crystal Crisis")
-CAP = 1400
-
-BASE = {
-    "query": "", "start": 0, "count": 100, "dynamic_data": "",
-    "supportedlang": "russian", "cc": "ru", "ndl": 1, "infinite": 1,
-}
-
-QUERIES = {
-    "specials only":            {"specials": 1, "sort_by": "_ASC"},
-    "specials, cheapest first": {"specials": 1, "sort_by": "Price_ASC"},
-    "term + specials":          {"specials": 1, "term": TERM},
-    "term, no specials key":    {"term": TERM},
-    "maxprice=free":            {"maxprice": "free"},
-    "maxprice=free + specials": {"maxprice": "free", "specials": 1},
-    "maxprice=free, term":      {"maxprice": "free", "term": TERM},
-}
+TARGET = set(APPIDS)
+CAP = 900
 
 
-def clip(text: str) -> str:
+def clip(value: object) -> str:
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
     return text if len(text) <= CAP else text[:CAP] + f"…(+{len(text) - CAP} chars)"
 
 
-def fetch_html(overrides: dict) -> str:
-    params = dict(BASE)
+def search(**overrides) -> dict:
+    params = {"query": "", "start": 0, "count": 100, "dynamic_data": "",
+              "supportedlang": "russian", "cc": "ru", "ndl": 1, "infinite": 1}
     params.update(overrides)
-    url = f"{sync_deals.SEARCH_URL}?{urllib.parse.urlencode(params)}"
-    return sync_deals.fetch_json(url).get("results_html", "")
-
-
-def row_markup(html: str, appid: int) -> str | None:
-    match = re.search(rf'<a\b[^>]*data-ds-appid="{appid}"[^>]*>[\s\S]*?</a>', html)
-    return match.group(0) if match else None
+    return sync_deals.fetch_json(f"{sync_deals.SEARCH_URL}?{urllib.parse.urlencode(params)}")
 
 
 print("=" * 72)
-print("WHICH QUERY RETURNS THE APP AT ALL (raw HTML, before any parsing)")
-print("=" * 72)
-found_in = {}
-for label, overrides in QUERIES.items():
-    try:
-        html = fetch_html(overrides)
-    except Exception as error:  # a rejected query is itself a finding
-        print(f"{label:26} ERROR {error}")
-        continue
-    anchors = len(re.findall(r'data-ds-appid="', html))
-    hits = [appid for appid in APPIDS if row_markup(html, appid)]
-    parsed = sync_deals.parse_rows(html)
-    found_in[label] = (html, hits)
-    print(f"{label:26} anchors={anchors:3}  parse_rows={len(parsed):3}  target rows present: {hits}")
-
-print("\n" + "=" * 72)
-print("RAW SEARCH ROW FOR THE TARGET, WHEREVER IT WAS FOUND")
-print("=" * 72)
-for label, (html, hits) in found_in.items():
-    for appid in hits:
-        markup = row_markup(html, appid)
-        print(f"\n--- {label} / appid {appid} ---")
-        print(clip(markup))
-        print(f"has discount_pct block: {bool(re.search(r'discount_pct', markup))}")
-        print(f"parse_rows keeps it   : {any(r['appid'] == appid for r in sync_deals.parse_rows(markup))}")
-
-print("\n" + "=" * 72)
-print("FEATURED CATEGORIES API")
+print("PROBE 1 — paginate the free price facet, is the app simply deeper in")
 print("=" * 72)
 try:
-    featured = sync_deals.fetch_json("https://store.steampowered.com/api/featuredcategories?cc=ru&l=russian")
-    print(f"sections: {sorted(featured.keys())}")
-    for name, section in featured.items():
-        if not isinstance(section, dict):
-            continue
-        items = section.get("items") or []
-        ids = {int(entry.get("id") or 0) for entry in items if isinstance(entry, dict)}
-        hit = sorted(set(APPIDS) & ids)
-        print(f"  {name:22} items={len(items):3} target present: {hit}")
+    first = search(maxprice="free")
+    total = int(first.get("total_count", 0))
+    print(f"maxprice=free total_count: {total}")
+    found_at = None
+    for start in range(0, min(total, 1000), 100):
+        html = search(maxprice="free", start=start).get("results_html", "")
+        hit = [a for a in APPIDS if re.search(rf'data-ds-appid="{a}"', html)]
+        if hit:
+            found_at = start
+            print(f"  FOUND {hit} at start={start}")
+            break
+    if found_at is None:
+        print(f"  not found in the first {min(total, 1000)} free entries")
 except Exception as error:
     print(f"ERROR {error}")
+
+print("\n" + "=" * 72)
+print("PROBE 2 — specials sorted by discount, what is the top discount")
+print("=" * 72)
+for sort_by in ("Discount_DESC", "Price_ASC"):
+    try:
+        rows = sync_deals.parse_rows(search(specials=1, sort_by=sort_by).get("results_html", ""))
+        top = sorted((r["discountPercent"] for r in rows), reverse=True)[:5]
+        print(f"  sort_by={sort_by:14} rows={len(rows):3} top discounts={top}")
+    except Exception as error:
+        print(f"  sort_by={sort_by:14} ERROR {error}")
+
+print("\n" + "=" * 72)
+print("PROBE 3 — IStoreQueryService/Query filter shapes")
+print("=" * 72)
+SHAPES = {
+    "no filter, discount sort": {"filters": {}, "sort": 12},
+    "free_to_keep flag":        {"filters": {"store_filters": [{"free_to_keep": True}]}},
+    "only free items":          {"filters": {"price_filters": {"only_free_items": True}}},
+    "on sale flag":             {"filters": {"store_filters": [{"is_on_sale": True}]}},
+}
+for label, query in SHAPES.items():
+    payload = {"query": {**query, "start": 0, "count": 20},
+               "context": {"language": "russian", "country_code": "RU"},
+               "data_request": {"include_assets": False, "include_all_purchase_options": True}}
+    url = ("https://api.steampowered.com/IStoreQueryService/Query/v1/?"
+           + urllib.parse.urlencode({"input_json": json.dumps(payload, separators=(",", ":"))}))
+    try:
+        response = sync_deals.fetch_json(url).get("response", {})
+        ids = [int(i.get("appid") or 0) for i in response.get("store_items", [])]
+        print(f"  {label:20} keys={sorted(response.keys())} ids[:8]={ids[:8]} target={sorted(TARGET & set(ids))}")
+    except Exception as error:
+        print(f"  {label:20} ERROR {clip(str(error))}")
+
+print("\n" + "=" * 72)
+print("PROBE 4 — legacy appdetails for the target")
+print("=" * 72)
+for appid in APPIDS:
+    url = f"{sync_deals.DETAIL_URL}?appids={appid}&cc=ru&l=russian"
+    try:
+        data = sync_deals.fetch_json(url).get(str(appid), {})
+        body = data.get("data", {})
+        print(f"  {appid}: success={data.get('success')} is_free={body.get('is_free')}")
+        print(f"     price_overview = {clip(body.get('price_overview'))}")
+        print(f"     package_groups[0] = {clip((body.get('package_groups') or [{}])[0])}")
+    except Exception as error:
+        print(f"  {appid}: ERROR {clip(str(error))}")
