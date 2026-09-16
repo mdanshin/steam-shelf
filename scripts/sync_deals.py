@@ -43,7 +43,7 @@ ALLOWED_HOSTS = {
 }
 MAX_RESPONSE_BYTES = 10 * 1024 * 1024
 MIN_DEALS_ITEMS = 700
-MIN_PUBLISHED_PERCENT = 90
+MIN_NORMALIZED_PERCENT = 50
 
 
 def validate_url(url: str) -> None:
@@ -132,15 +132,17 @@ def parse_rows(fragment: str) -> list[dict]:
         final = re.search(r'discount_final_price[^>]*>([\s\S]*?)</', row)
         href = re.search(r'href="([^"]+)"', row)
         review_percent, review_count = review_values(row)
-        if not all((appid, item_key, title, discount, original, final, href)):
+        # Price strings are informational only: a 100% discount renders "Бесплатно"
+        # instead of a price block, and dropping such rows would hide the best deals.
+        if not all((appid, item_key, title, discount, href)):
             continue
         parsed.append({
             "appid": int(appid.group(1)),
             "itemKey": html.unescape(item_key.group(1)),
             "name": text(title.group(1)),
             "discountPercent": int(discount.group(1)),
-            "roughOriginalMinor": rubles_minor(text(original.group(1))),
-            "roughPriceMinor": rubles_minor(text(final.group(1))),
+            "roughOriginalMinor": rubles_minor(text(original.group(1))) if original else None,
+            "roughPriceMinor": rubles_minor(text(final.group(1))) if final else None,
             "reviewPercent": review_percent,
             "reviewCount": review_count,
             "url": html.unescape(href.group(1)).split("?", 1)[0],
@@ -216,17 +218,45 @@ def attach_covers(deals: list[dict], *, download: bool = True) -> None:
         game["cover"] = cover_results.get(game["appid"], False)
 
 
-def published_deals_count() -> int:
-    if not OUTPUT.exists():
-        return 0
-    return len(re.findall(r'^\s*"appid"\s*:', OUTPUT.read_text(encoding="utf-8"), re.M))
+def option_prices(option: dict) -> tuple[int, int, int] | None:
+    """Read a discounted price, tolerating Steam's omission of zero-valued fields.
+
+    Steam serializes store items from protobuf, which drops integer fields that equal
+    zero. A 100% discount therefore arrives with no final_price_in_cents at all, and
+    reading that key directly would silently discard every free-to-keep promotion.
+    """
+    try:
+        original = int(option["original_price_in_cents"])
+        current = int(option.get("final_price_in_cents") or 0)
+        discount_percent = int(option.get("discount_pct") or 0)
+    except (KeyError, TypeError, ValueError):
+        return None
+    if original <= 0 or current < 0 or discount_percent <= 0 or current >= original:
+        return None
+    return current, original, discount_percent
 
 
-def validate_deals_completeness(current_count: int, previous_count: int, stage: str) -> None:
-    minimum = max(MIN_DEALS_ITEMS, (previous_count * MIN_PUBLISHED_PERCENT + 99) // 100)
-    if current_count < minimum:
+def validate_offer_volume(scraped: int) -> None:
+    """Fail closed when the Specials scrape itself came back implausibly short."""
+    if scraped < MIN_DEALS_ITEMS:
         raise RuntimeError(
-            f"Steam {stage} catalog is too small: received {current_count}, required at least {minimum}"
+            f"Steam offers catalog is too small: received {scraped}, required at least {MIN_DEALS_ITEMS}"
+        )
+
+
+def validate_normalized_yield(normalized: int, scraped: int) -> None:
+    """Fail closed when detail normalization drops an implausible share of the scrape.
+
+    The floor is derived from this run's own scrape rather than the committed
+    snapshot: the workflow never commits generated data back, so a snapshot-relative
+    floor freezes at whatever was last published and blocks every later deploy once
+    Steam genuinely runs fewer specials.
+    """
+    minimum = max(MIN_DEALS_ITEMS, scraped * MIN_NORMALIZED_PERCENT // 100)
+    if normalized < minimum:
+        raise RuntimeError(
+            f"Steam normalized deals catalog is too small: received {normalized} "
+            f"of {scraped} scraped offers, required at least {minimum}"
         )
 
 
@@ -262,8 +292,7 @@ def main() -> None:
     for offer in all_offers.values():
         offers_by_appid.setdefault(offer["appid"], offer)
 
-    previous_count = published_deals_count()
-    validate_deals_completeness(len(offers_by_appid), previous_count, "offers")
+    validate_offer_volume(len(offers_by_appid))
 
     store_items = []
     appids = sorted(offers_by_appid)
@@ -279,14 +308,10 @@ def main() -> None:
         appid = int(item.get("appid") or 0)
         offer = offers_by_appid.get(appid)
         option = item.get("best_purchase_option") or {}
-        try:
-            current = int(option["final_price_in_cents"])
-            original = int(option["original_price_in_cents"])
-            discount_percent = int(option["discount_pct"])
-        except (KeyError, TypeError, ValueError):
+        prices = option_prices(option)
+        if prices is None or not offer or item.get("type") != 0 or not item.get("visible"):
             continue
-        if not offer or item.get("type") != 0 or not item.get("visible") or discount_percent <= 0 or current >= original:
-            continue
+        current, original, discount_percent = prices
         savings = original - current
         high_value = discount_percent >= MIN_DISCOUNT and savings >= MIN_SAVINGS and original >= MIN_ORIGINAL
         quality_match = high_value and quality_pass(offer["reviewPercent"], offer["reviewCount"])
@@ -320,7 +345,7 @@ def main() -> None:
             "_coverUrl": item_cover_url(item),
         })
 
-    validate_deals_completeness(len(deals), previous_count, "normalized deals")
+    validate_normalized_yield(len(deals), len(appids))
 
     download_covers = os.environ.get("STEAM_DEALS_SKIP_COVERS") != "1"
     attach_covers(deals, download=download_covers)
