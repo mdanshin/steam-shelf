@@ -43,7 +43,7 @@ ALLOWED_HOSTS = {
 }
 MAX_RESPONSE_BYTES = 10 * 1024 * 1024
 MIN_DEALS_ITEMS = 700
-MIN_NORMALIZED_PERCENT = 50
+MIN_DETAIL_COVERAGE_PERCENT = 50
 
 
 def validate_url(url: str) -> None:
@@ -244,19 +244,35 @@ def validate_offer_volume(scraped: int) -> None:
         )
 
 
-def validate_normalized_yield(normalized: int, scraped: int) -> None:
-    """Fail closed when detail normalization drops an implausible share of the scrape.
+def validate_detail_coverage(detailed: int, requested: int) -> None:
+    """Fail closed when the store detail lookup answered for too few of the scraped apps.
 
-    The floor is derived from this run's own scrape rather than the committed
-    snapshot: the workflow never commits generated data back, so a snapshot-relative
-    floor freezes at whatever was last published and blocks every later deploy once
-    Steam genuinely runs fewer specials.
+    This compares like with like: every appid passed to the browse service came from
+    Steam's own Specials listing, so the response should cover nearly all of them and
+    a collapse here means the detail API broke rather than that the sale ended.
     """
-    minimum = max(MIN_DEALS_ITEMS, scraped * MIN_NORMALIZED_PERCENT // 100)
-    if normalized < minimum:
+    minimum = requested * MIN_DETAIL_COVERAGE_PERCENT // 100
+    if detailed < minimum:
         raise RuntimeError(
-            f"Steam normalized deals catalog is too small: received {normalized} "
-            f"of {scraped} scraped offers, required at least {minimum}"
+            f"Steam store detail catalog is too small: received {detailed} "
+            f"of {requested} requested apps, required at least {minimum}"
+        )
+
+
+def validate_published_volume(normalized: int) -> None:
+    """Fail closed on a catastrophic collapse of the final catalog.
+
+    Only an absolute floor is applied. A share-of-scrape floor cannot be used here:
+    the Specials listing carries free-to-play entries, bundles and editions that
+    never normalize into a discounted game, so the ratio tracks Steam's promotion mix
+    rather than this pipeline's health. A snapshot-relative floor is worse still,
+    because the workflow never commits generated data back and would freeze the site
+    at whatever was last published.
+    """
+    if normalized < MIN_DEALS_ITEMS:
+        raise RuntimeError(
+            f"Steam normalized deals catalog is too small: received {normalized}, "
+            f"required at least {MIN_DEALS_ITEMS}"
         )
 
 
@@ -300,6 +316,8 @@ def main() -> None:
     for offset in range(0, len(appids), 50):
         store_items.extend(browse_items(appids[offset:offset + 50]))
         time.sleep(0.4)
+
+    validate_detail_coverage(len(store_items), len(appids))
 
     deals = []
     high_value_candidates = 0
@@ -345,7 +363,7 @@ def main() -> None:
             "_coverUrl": item_cover_url(item),
         })
 
-    validate_normalized_yield(len(deals), len(appids))
+    validate_published_volume(len(deals))
 
     download_covers = os.environ.get("STEAM_DEALS_SKIP_COVERS") != "1"
     attach_covers(deals, download=download_covers)
@@ -357,6 +375,7 @@ def main() -> None:
         "pages": pages,
         "uniqueOffers": len(all_offers),
         "uniqueApps": len(appids),
+        "detailedApps": len(store_items),
         "exactPriceCandidates": len(deals),
         "highValueCandidates": high_value_candidates,
         "qualityCandidates": quality_candidates,

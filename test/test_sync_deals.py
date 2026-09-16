@@ -84,21 +84,29 @@ class SearchRowTests(unittest.TestCase):
 
 
 class CompletenessTests(unittest.TestCase):
-    def test_absolute_and_scrape_relative_thresholds_fail_closed(self):
-        with self.assertRaisesRegex(RuntimeError, "catalog is too small"):
+    def test_each_stage_fails_closed_on_its_own_collapse(self):
+        with self.assertRaisesRegex(RuntimeError, "offers catalog is too small"):
             sync_deals.validate_offer_volume(101)
         sync_deals.validate_offer_volume(1765)
-        with self.assertRaisesRegex(RuntimeError, "catalog is too small"):
-            sync_deals.validate_normalized_yield(600, 6000)
-        with self.assertRaisesRegex(RuntimeError, "catalog is too small"):
-            sync_deals.validate_normalized_yield(2000, 6000)
-        sync_deals.validate_normalized_yield(3000, 6000)
 
-    def test_shrinking_steam_specials_no_longer_block_a_deploy(self):
-        # The committed snapshot held 3963 deals; a genuinely smaller Steam catalog
-        # must still publish instead of freezing the site on stale data.
+        with self.assertRaisesRegex(RuntimeError, "store detail catalog is too small"):
+            sync_deals.validate_detail_coverage(0, 6000)
+        with self.assertRaisesRegex(RuntimeError, "store detail catalog is too small"):
+            sync_deals.validate_detail_coverage(2000, 6000)
+        sync_deals.validate_detail_coverage(5900, 6000)
+
+        with self.assertRaisesRegex(RuntimeError, "normalized deals catalog is too small"):
+            sync_deals.validate_published_volume(600)
+        sync_deals.validate_published_volume(3484)
+
+    def test_the_two_real_deploy_blocking_runs_now_publish(self):
+        # Both observed production failures: a Steam catalog that genuinely shrank
+        # (3463 deals against a 3963 snapshot) and a promotion mix where fewer than
+        # half the scraped Specials rows normalize into discounted games.
         sync_deals.validate_offer_volume(5600)
-        sync_deals.validate_normalized_yield(3463, 5600)
+        sync_deals.validate_published_volume(3463)
+        sync_deals.validate_offer_volume(8983)
+        sync_deals.validate_published_volume(3484)
 
     def test_full_discount_reaches_the_published_catalog(self):
         rows = [{"appid": 447700, "itemKey": "App_447700", "name": "Crystal Crisis",
