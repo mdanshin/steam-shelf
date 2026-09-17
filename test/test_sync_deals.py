@@ -1,5 +1,6 @@
 import importlib.util
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -208,6 +209,52 @@ class FullSweepTests(unittest.TestCase):
         # The ordinary discount is still there, the undiscounted app is not.
         self.assertIn('"appid": 10', published)
         self.assertNotIn('"appid": 777', published)
+
+
+class ParallelPricingTests(unittest.TestCase):
+    def test_every_appid_is_priced_exactly_once_across_workers(self):
+        rows = [{"appid": index, "itemKey": f"App_{index}", "name": f"Game {index}",
+                 "discountPercent": 50, "roughOriginalMinor": None, "roughPriceMinor": None,
+                 "reviewPercent": 90, "reviewCount": 20000, "url": "u"} for index in range(1, 101)]
+        requested = []
+        lock = threading.Lock()
+
+        def browse(appids):
+            with lock:
+                requested.extend(appids)
+            return [{"appid": appid, "name": f"Game {appid}", "type": 0, "visible": True, "tags": [],
+                     "best_purchase_option": {"original_price_in_cents": 20000,
+                                              "final_price_in_cents": 10000, "discount_pct": 50}}
+                    for appid in appids]
+
+        def fetch_json(url):
+            if "IStoreQueryService" in url:
+                return {"response": {"ids": [{"appid": index} for index in range(1, 501)],
+                                     "metadata": {"total_matching_records": 500}}}
+            return {"total_count": 104, "results_html": "x"}
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "deals-data.js"
+            watchlist = Path(directory) / "watchlist.json"
+            watchlist.write_text('{"appids": []}', encoding="utf-8")
+            with mock.patch.object(sync_deals, "OUTPUT", output), \
+                    mock.patch.object(sync_deals, "WATCHLIST", watchlist), \
+                    mock.patch.object(sync_deals, "MIN_DEALS_ITEMS", 1), \
+                    mock.patch.object(sync_deals, "PRICE_BATCH", 50), \
+                    mock.patch.object(sync_deals, "PRICE_WINDOW", 3), \
+                    mock.patch.object(sync_deals, "fetch_json", side_effect=fetch_json), \
+                    mock.patch.object(sync_deals, "parse_rows", side_effect=[rows, []]), \
+                    mock.patch.object(sync_deals, "official_genre_tags", return_value={}), \
+                    mock.patch.object(sync_deals, "browse_items", side_effect=browse), \
+                    mock.patch.dict(sync_deals.os.environ, {"STEAM_DEALS_SKIP_COVERS": "1"}), \
+                    mock.patch.object(sync_deals.time, "sleep"):
+                sync_deals.main()
+            published = output.read_text(encoding="utf-8")
+
+        # Windowing and threading must not drop, duplicate or reorder work.
+        self.assertEqual(len(requested), len(set(requested)))
+        self.assertEqual(sorted(requested), list(range(1, 501)))
+        self.assertEqual(published.count('"appid":'), 500)
 
 
 class WatchlistTests(unittest.TestCase):
