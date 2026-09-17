@@ -168,14 +168,35 @@ def quality_pass(percent: int | None, count: int | None) -> bool:
     ))
 
 
-def browse_items(appids: list[int]) -> list[dict]:
+def browse_items(appids: list[int], *, detailed: bool = True) -> list[dict]:
+    """Store items for these appids.
+
+    Assets and tags multiply the response size, and are only needed for entries
+    that will actually be published, so the catalogue sweep asks for prices alone.
+    """
+    data_request = {"include_all_purchase_options": True}
+    if detailed:
+        data_request.update({"include_assets": True, "include_tag_count": 20})
     payload = {
         "ids": [{"appid": appid} for appid in appids],
         "context": {"language": "russian", "country_code": "RU"},
-        "data_request": {"include_assets": True, "include_all_purchase_options": True, "include_tag_count": 20},
+        "data_request": data_request,
     }
     params = urllib.parse.urlencode({"input_json": json.dumps(payload, separators=(",", ":"))})
     return fetch_json(f"{BROWSE_URL}?{params}").get("response", {}).get("store_items", [])
+
+
+def price_only(appids: list[int]) -> list[dict]:
+    return browse_items(appids, detailed=False)
+
+
+def is_publishable(item: dict) -> bool:
+    return bool(
+        int(item.get("appid") or 0) > 0
+        and item.get("type") == 0
+        and item.get("visible")
+        and option_prices(item.get("best_purchase_option") or {})
+    )
 
 
 def item_cover_url(item: dict) -> str | None:
@@ -431,18 +452,31 @@ def main() -> None:
     catalog_appids = enumerate_catalog_appids() if full_sweep_enabled() else []
     appids = sorted(set(offers_by_appid) | set(catalog_appids))
 
-    # Priced in parallel and normalized as each batch arrives: holding a few
-    # hundred thousand raw store items in memory at once is needless, and the
-    # requests are network bound rather than rate limited.
-    deals = []
-    seen_appids: set[int] = set()
+    # Two passes. The first prices the whole catalogue and keeps only appids, so
+    # neither transfer nor JSON parsing carries assets and tags for two hundred
+    # thousand apps. The second asks for full detail on the few thousand that
+    # will actually be published. Both run in parallel, in bounded windows, so
+    # only a slice of raw store items is held at a time.
+    discounted: list[int] = []
     detailed = 0
-    batches = [appids[index:index + PRICE_BATCH] for index in range(0, len(appids), PRICE_BATCH)]
     with ThreadPoolExecutor(max_workers=PRICE_WORKERS) as pool:
+        batches = [appids[index:index + PRICE_BATCH] for index in range(0, len(appids), PRICE_BATCH)]
         for window in range(0, len(batches), PRICE_WINDOW):
-            for items in pool.map(browse_items, batches[window:window + PRICE_WINDOW]):
+            for items in pool.map(price_only, batches[window:window + PRICE_WINDOW]):
                 for item in items:
                     detailed += 1
+                    if is_publishable(item):
+                        discounted.append(int(item["appid"]))
+
+        validate_detail_coverage(detailed, len(appids))
+
+        deals = []
+        seen_appids: set[int] = set()
+        detail_batches = [discounted[index:index + PRICE_BATCH]
+                          for index in range(0, len(discounted), PRICE_BATCH)]
+        for window in range(0, len(detail_batches), PRICE_WINDOW):
+            for items in pool.map(browse_items, detail_batches[window:window + PRICE_WINDOW]):
+                for item in items:
                     appid = int(item.get("appid") or 0)
                     if appid in seen_appids:
                         continue
@@ -451,7 +485,6 @@ def main() -> None:
                         deals.append(game)
                         seen_appids.add(game["appid"])
 
-    validate_detail_coverage(detailed, len(appids))
     validate_published_volume(len(deals))
 
     # Steam's Specials listing never carries free-to-keep giveaways: they top out
@@ -481,6 +514,7 @@ def main() -> None:
         "uniqueApps": len(appids),
         "catalogApps": len(catalog_appids),
         "detailedApps": detailed,
+        "discountedApps": len(discounted),
         "watchlistDeals": len(watchlist_deals),
         "exactPriceCandidates": len(deals),
         "highValueCandidates": high_value_candidates,
