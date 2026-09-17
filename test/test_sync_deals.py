@@ -99,7 +99,7 @@ class PaginationTests(unittest.TestCase):
         rows = [{"appid": index, "itemKey": f"App_{index}", "name": f"Game {index}",
                  "discountPercent": 50, "roughOriginalMinor": None, "roughPriceMinor": None,
                  "reviewPercent": 90, "reviewCount": 20000, "url": "u"} for index in range(1, 101)]
-        def browse(appids):
+        def browse(appids, **_):
             return [{"appid": appid, "name": f"Game {appid}", "type": 0, "visible": True, "tags": [],
                      "best_purchase_option": {"original_price_in_cents": 20000,
                                               "final_price_in_cents": 10000, "discount_pct": 50}}
@@ -196,7 +196,7 @@ class FullSweepTests(unittest.TestCase):
                     mock.patch.object(sync_deals, "parse_rows", return_value=specials_rows), \
                     mock.patch.object(sync_deals, "official_genre_tags", return_value={}), \
                     mock.patch.object(sync_deals, "browse_items",
-                                      side_effect=lambda ids: [priced[i] for i in ids if i in priced]), \
+                                      side_effect=lambda ids, **_: [priced[i] for i in ids if i in priced]), \
                     mock.patch.dict(sync_deals.os.environ, {"STEAM_DEALS_SKIP_COVERS": "1"}), \
                     mock.patch.object(sync_deals.time, "sleep"):
                 sync_deals.main()
@@ -216,12 +216,14 @@ class ParallelPricingTests(unittest.TestCase):
         rows = [{"appid": index, "itemKey": f"App_{index}", "name": f"Game {index}",
                  "discountPercent": 50, "roughOriginalMinor": None, "roughPriceMinor": None,
                  "reviewPercent": 90, "reviewCount": 20000, "url": "u"} for index in range(1, 101)]
-        requested = []
+        swept = []
+        detailed = []
         lock = threading.Lock()
 
-        def browse(appids):
+        def browse(appids, detailed_pass=True, **kwargs):
+            target = swept if kwargs.get("detailed", detailed_pass) is False else detailed
             with lock:
-                requested.extend(appids)
+                target.extend(appids)
             return [{"appid": appid, "name": f"Game {appid}", "type": 0, "visible": True, "tags": [],
                      "best_purchase_option": {"original_price_in_cents": 20000,
                                               "final_price_in_cents": 10000, "discount_pct": 50}}
@@ -252,9 +254,44 @@ class ParallelPricingTests(unittest.TestCase):
             published = output.read_text(encoding="utf-8")
 
         # Windowing and threading must not drop, duplicate or reorder work.
-        self.assertEqual(len(requested), len(set(requested)))
-        self.assertEqual(sorted(requested), list(range(1, 501)))
+        # Pass one prices every appid once, without assets or tags.
+        self.assertEqual(sorted(swept), list(range(1, 501)))
+        self.assertEqual(len(swept), len(set(swept)))
+        # Pass two asks for full detail only on what will be published.
+        self.assertEqual(sorted(detailed), list(range(1, 501)))
+        self.assertEqual(len(detailed), len(set(detailed)))
         self.assertEqual(published.count('"appid":'), 500)
+
+
+class LightSweepTests(unittest.TestCase):
+    def test_sweep_pass_asks_for_prices_only(self):
+        captured = {}
+
+        def fetch_json(url):
+            captured[url] = True
+            return {"response": {"store_items": []}}
+
+        with mock.patch.object(sync_deals, "fetch_json", side_effect=fetch_json):
+            sync_deals.price_only([1, 2])
+            sync_deals.browse_items([1, 2])
+
+        sweep_url = [u for u in captured if "include_assets" not in u]
+        detail_url = [u for u in captured if "include_assets" in u]
+        self.assertEqual(len(sweep_url), 1)
+        self.assertEqual(len(detail_url), 1)
+        self.assertNotIn("include_tag_count", sweep_url[0])
+        self.assertIn("include_all_purchase_options", sweep_url[0])
+        self.assertIn("include_tag_count", detail_url[0])
+
+    def test_publishable_matches_what_normalization_would_keep(self):
+        discounted = {"appid": 5, "type": 0, "visible": True,
+                      "best_purchase_option": {"original_price_in_cents": 100,
+                                               "final_price_in_cents": 50, "discount_pct": 50}}
+        self.assertTrue(sync_deals.is_publishable(discounted))
+        self.assertFalse(sync_deals.is_publishable({**discounted, "visible": False}))
+        self.assertFalse(sync_deals.is_publishable({**discounted, "type": 4}))
+        self.assertFalse(sync_deals.is_publishable({**discounted, "appid": 0}))
+        self.assertFalse(sync_deals.is_publishable({"appid": 5, "type": 0, "visible": True}))
 
 
 class WatchlistTests(unittest.TestCase):
@@ -301,7 +338,7 @@ class WatchlistTests(unittest.TestCase):
                          "best_purchase_option": {"original_price_in_cents": 20000,
                                                   "final_price_in_cents": 10000, "discount_pct": 50}}
 
-        def browse(appids):
+        def browse(appids, **_):
             return [self.ITEM] if list(appids) == [447700] else [specials_item]
 
         with tempfile.TemporaryDirectory() as directory:
