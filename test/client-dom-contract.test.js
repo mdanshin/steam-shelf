@@ -12,3 +12,15 @@ test('every exact client id lookup exists in the production page shell', async (
   const missing = [...new Set(usedIds)].filter((id) => !declaredIds.has(id));
   assert.deepEqual(missing, []);
 });
+
+test('the deals view can answer ownership without leaking it into the shared catalogue', async () => {
+  const [source, data] = await Promise.all([
+    readFile(new URL('../client/app.js', import.meta.url), 'utf8'),
+    readFile(new URL('../data/deals-data.js', import.meta.url), 'utf8'),
+  ]);
+  // Ownership is read from the local library snapshot on the device.
+  assert.match(source, /function ownedAppids\(\)/);
+  assert.match(source, /state\.catalogs\.get\('library'\)/);
+  // It must never be baked into the published, shared deals file.
+  assert.doesNotMatch(data, /"owned"\s*:/);
+});
