@@ -58,6 +58,12 @@ REVIEW_URL = "https://store.steampowered.com/appreviews"
 # Steam's own wording: 6 is "mostly positive", 5 "mixed", 4 and below negative.
 MIN_REVIEW_PERCENT = 70
 MIN_REVIEW_COUNT = 50
+# Ratings are a nice-to-have, so they get a budget rather than an open-ended
+# wait. A sample of eight popular apps suggested seven minutes for the whole
+# catalogue; the real endpoint is far slower, so the run is bounded instead.
+REVIEW_BUDGET_SECONDS = int(os.environ.get("STEAM_DEALS_REVIEW_BUDGET", "600"))
+# Apps per budget check, so a long run stops promptly.
+REVIEW_WINDOW = 200
 WATCHLIST = ROOT / "data" / "free-to-keep-watchlist.json"
 
 
@@ -527,8 +533,16 @@ def main() -> None:
     validate_published_volume(len(deals))
 
     # Ratings for everything that ships, so the site can filter on them.
+    # Entries the Specials rows already rated are skipped, and the pass stops
+    # when its budget runs out: an unrated entry is simply never called weak.
+    ratings = {}
+    pending = [game["appid"] for game in deals if game.get("reviewCount") is None]
+    deadline = time.monotonic() + REVIEW_BUDGET_SECONDS
     with ThreadPoolExecutor(max_workers=PRICE_WORKERS) as pool:
-        ratings = dict(pool.map(review_summary, [game["appid"] for game in deals]))
+        for offset in range(0, len(pending), REVIEW_WINDOW):
+            if time.monotonic() > deadline:
+                break
+            ratings.update(dict(pool.map(review_summary, pending[offset:offset + REVIEW_WINDOW])))
     for game in deals:
         rating = ratings.get(game["appid"]) or {}
         if rating:
@@ -571,6 +585,8 @@ def main() -> None:
         "ratedDeals": sum(game.get("reviewCount") is not None for game in deals),
         "weakDeals": sum(game.get("weak", False) for game in deals),
         "ratingThresholds": {"percent": MIN_REVIEW_PERCENT, "count": MIN_REVIEW_COUNT},
+        "ratingsFetched": len(ratings),
+        "ratingsPending": len(pending),
         "exactPriceCandidates": len(deals),
         "highValueCandidates": high_value_candidates,
         "qualityCandidates": quality_candidates,

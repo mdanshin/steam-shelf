@@ -10,15 +10,23 @@ const $ = (selector) => document.querySelector(selector);
 const config = window.STEAM_SHELF_FIREBASE_CONFIG;
 // Remembering the filter is a per-device convenience, so a blocked or empty
 // store must not break rendering.
+function readFlag(name) {
+  try { return localStorage.getItem(`steam-shelf:${name}`) === '1'; } catch { return false; }
+}
+
+function writeFlag(name, value) {
+  try { localStorage.setItem(`steam-shelf:${name}`, value ? '1' : '0'); } catch { /* ignore */ }
+}
+
 function readHideWeak() {
-  try { return localStorage.getItem('steam-shelf:hide-weak') === '1'; } catch { return false; }
+  return readFlag('hide-weak');
 }
 
 function writeHideWeak(value) {
-  try { localStorage.setItem('steam-shelf:hide-weak', value ? '1' : '0'); } catch { /* ignore */ }
+  writeFlag('hide-weak', value);
 }
 
-const state = { user: null, vault: null, credentials: null, controller: null, view: 'library', query: '', sort: 'playtime', catalogs: new Map(), epoch: 0, hideWeak: readHideWeak() };
+const state = { user: null, vault: null, credentials: null, controller: null, view: 'library', query: '', sort: 'playtime', catalogs: new Map(), epoch: 0, hideWeak: readHideWeak(), hideOwned: readFlag('hide-owned'), owned: null };
 const viewMeta = {
   library: { title: 'Библиотека', kicker: 'МОЯ КОЛЛЕКЦИЯ', empty: 'Откройте настройки и подключите Steam.', sorts: [['playtime','По времени в игре'],['recent','Недавно запущенные'],['name','По названию']] },
   wishlist: { title: 'Желаемое', kicker: 'СПИСОК ЖЕЛАНИЙ', empty: 'Синхронизируйте публичный wishlist.', sorts: [['date','Сначала добавленные недавно'],['discount','По размеру скидки'],['rating','По оценке'],['savings','По экономии'],['price','Сначала дешевле']] },
@@ -48,8 +56,21 @@ function card(game) {
     prices.append(element('span', 'price', money(game.priceMinor))); body.append(prices);
     if (Number.isInteger(game.savingsMinor) && game.savingsMinor > 0) body.append(element('div', 'saving', `Экономия ${money(game.savingsMinor)}`));
     body.append(rating(game));
+    if (state.view === 'deals' && state.owned?.has(Number(game.appid))) {
+      article.classList.add('owned');
+      body.append(element('div', 'game-owned', 'Уже у вас'));
+    }
   }
   article.append(image, body); return article;
+}
+
+// Appids the signed-in account already owns, read from the local library
+// snapshot. The deals view is shared by everyone, so ownership is decided on
+// the device and never travels with the published catalogue.
+function ownedAppids() {
+  const library = state.catalogs.get('library');
+  if (!library?.games?.length) return null;
+  return new Set(library.games.map((game) => Number(game.appid)));
 }
 
 function rating(game) {
@@ -85,9 +106,11 @@ function sorted(items) {
 
 function renderCatalog() {
   const data = state.catalogs.get(state.view) || { games: [], syncedAt: null };
+  state.owned = ownedAppids();
   const query = state.query.trim().toLocaleLowerCase('ru');
   const pool = state.view === 'deals' ? currentDeals(data.games || []) : (data.games || []);
-  const available = state.hideWeak ? pool.filter((game) => !game.weak) : pool;
+  const rated = state.hideWeak ? pool.filter((game) => !game.weak) : pool;
+  const available = state.hideOwned && state.view === 'deals' && state.owned ? rated.filter((game) => !state.owned.has(Number(game.appid))) : rated;
   const games = sorted(available.filter((game) => !query || String(game.name).toLocaleLowerCase('ru').includes(query)));
   $('#catalog').replaceChildren(...games.slice(0, 600).map(card));
   $('#summary').replaceChildren(element('span', '', `${games.length} из ${available.length}`), element('span', '', data.syncedAt ? `Обновлено ${new Date(data.syncedAt).toLocaleString('ru-RU')}` : 'Ещё не синхронизировано'));
@@ -100,6 +123,11 @@ async function loadView(view) {
   $('#section-title').textContent = meta.title; $('#section-kicker').textContent = meta.kicker; $('#settings-panel').hidden = requested !== 'settings'; $('#catalog-toolbar').hidden = requested === 'settings'; $('#catalog').hidden = requested === 'settings'; $('#summary').hidden = requested === 'settings'; $('#empty').hidden = true; $('#onboarding').hidden = Boolean(state.credentials) || requested === 'settings' || requested === 'deals';
   if (requested === 'settings') return;
   const sort = $('#sort'); sort.replaceChildren(...meta.sorts.map(([value,label]) => { const option = element('option','',label); option.value=value; return option; })); state.sort = meta.sorts[0][0]; $('#sync').hidden = requested === 'deals';
+  if (requested === 'deals' && !state.catalogs.has('library') && state.vault) {
+    // Ownership needs the library snapshot; load it quietly and ignore failures.
+    try { const library = await state.vault.snapshot('library'); if (library) state.catalogs.set('library', library); } catch { /* ignore */ }
+    if (epoch !== state.epoch || requested !== state.view) return;
+  }
   if (!state.catalogs.has(requested)) {
     const snapshot = requested === 'deals' ? await import('./deals-data.js').then(({ dealsCatalog, dealsSyncedAt }) => ({ games: dealsCatalog, syncedAt: dealsSyncedAt })) : await state.vault.snapshot(requested);
     if (epoch !== state.epoch || requested !== state.view) return;
@@ -170,6 +198,8 @@ window.addEventListener('hashchange', () => state.user && loadView(location.hash
 $('#search').addEventListener('input', (event) => { state.query = event.target.value; renderCatalog(); });
 $('#sort').addEventListener('change', (event) => { state.sort = event.target.value; renderCatalog(); });
 $('#hide-weak').checked = state.hideWeak;
+$('#hide-owned').checked = state.hideOwned;
+$('#hide-owned').addEventListener('change', (event) => { state.hideOwned = event.target.checked; writeFlag('hide-owned', state.hideOwned); renderCatalog(); });
 $('#hide-weak').addEventListener('change', (event) => { state.hideWeak = event.target.checked; writeHideWeak(state.hideWeak); renderCatalog(); });
 $('#sync').addEventListener('click', syncCurrent);
 $('#steam-id').addEventListener('input', (event) => { const digits = normalizeSteamId(event.target.value); if (event.target.value !== digits) event.target.value = digits; event.target.setCustomValidity(steamIdProblem(digits)); });
