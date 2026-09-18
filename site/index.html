@@ -7,7 +7,7 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://apis.google.com; style-src 'self'; img-src 'self' https://*.steamstatic.com https://lh3.googleusercontent.com data:; connect-src 'self' https://api.danshin.ms https://*.googleapis.com https://securetoken.googleapis.com https://identitytoolkit.googleapis.com; frame-src https://*.firebaseapp.com https://accounts.google.com; base-uri 'none'; form-action 'self'; object-src 'none'; upgrade-insecure-requests">
   <title>Steam Shelf — библиотека, желаемое и скидки</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="./styles.css?v=3">
+  <link rel="stylesheet" href="./styles.css?v=4">
 </head>
 <body>
   <main id="login-screen" class="login-shell">
@@ -52,6 +52,7 @@
       <section id="catalog-toolbar" class="toolbar">
         <label class="search"><span>⌕</span><input id="search" type="search" placeholder="Найти игру" autocomplete="off"></label>
         <label class="select-label">Сортировка <select id="sort"></select></label>
+        <label class="toggle-label" title="Скрывает игры с оценкой ниже 70% или менее чем 50 отзывами"><input id="hide-weak" type="checkbox"> Только с хорошей оценкой</label>
         <button id="sync" class="primary">Обновить</button>
       </section>
       <section id="summary" class="summary"></section>

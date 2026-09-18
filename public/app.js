@@ -9,11 +9,21 @@ function steamIdProblem(value) {
   return 'SteamID64 должен начинаться с 7656119.';
 }
 const lifecycle = createCatalogLifecycle();
-const state = { me: null, view: 'library', catalogs: lifecycle.catalogs, query: '', sort: 'playtime' };
+// Remembering the filter is a per-device convenience, so a blocked or empty
+// store must not break rendering.
+function readHideWeak() {
+  try { return localStorage.getItem('steam-shelf:hide-weak') === '1'; } catch { return false; }
+}
+
+function writeHideWeak(value) {
+  try { localStorage.setItem('steam-shelf:hide-weak', value ? '1' : '0'); } catch { /* ignore */ }
+}
+
+const state = { me: null, view: 'library', catalogs: lifecycle.catalogs, query: '', sort: 'playtime', hideWeak: readHideWeak() };
 const viewMeta = {
   library: { title: 'Библиотека', kicker: 'МОЯ КОЛЛЕКЦИЯ', empty: 'Синхронизируйте аккаунт, чтобы увидеть игры.', sorts: [['playtime','По времени в игре'],['recent','Недавно запущенные'],['name','По названию']] },
-  wishlist: { title: 'Желаемое', kicker: 'СПИСОК ЖЕЛАНИЙ', empty: 'Синхронизируйте список желаемого. Профиль Steam должен быть публичным.', sorts: [['date','Сначала добавленные недавно'],['discount','По размеру скидки'],['savings','По экономии'],['price','Сначала дешевле']] },
-  deals: { title: 'Скидки', kicker: 'STEAM SPECIALS', empty: 'Снимок скидок ещё не опубликован.', sorts: [['savings','По экономии'],['discount','По размеру скидки'],['end','Скоро закончатся']] },
+  wishlist: { title: 'Желаемое', kicker: 'СПИСОК ЖЕЛАНИЙ', empty: 'Синхронизируйте список желаемого. Профиль Steam должен быть публичным.', sorts: [['date','Сначала добавленные недавно'],['discount','По размеру скидки'],['rating','По оценке'],['savings','По экономии'],['price','Сначала дешевле']] },
+  deals: { title: 'Скидки', kicker: 'STEAM SPECIALS', empty: 'Снимок скидок ещё не опубликован.', sorts: [['savings','По экономии'],['discount','По размеру скидки'],['rating','По оценке'],['end','Скоро закончатся']] },
   settings: { title: 'Настройки', kicker: 'ПРИВАТНОСТЬ И ДОСТУП', empty: '', sorts: [] },
 };
 
@@ -73,9 +83,28 @@ function card(game) {
     prices.append(element('span', 'price', money(game.priceMinor)));
     body.append(prices);
     if (Number.isInteger(game.savingsMinor) && game.savingsMinor > 0) body.append(element('div', 'saving', `Экономия ${money(game.savingsMinor)}`));
+    body.append(rating(game));
   }
   article.append(image, body);
   return article;
+}
+
+function rating(game) {
+  const box = element('div', 'game-rating');
+  if (!Number.isFinite(game.reviewPercent) || !Number.isFinite(game.reviewCount)) {
+    box.classList.add('unrated');
+    box.append(element('span', '', 'Нет отзывов'));
+    return box;
+  }
+  // Steam's own bands, so the colour matches what the store shows.
+  const tone = game.reviewPercent >= 80 ? 'good' : game.reviewPercent >= 70 ? 'fair' : 'poor';
+  box.classList.add(tone);
+  box.append(
+    element('span', 'rating-percent', `${game.reviewPercent}%`),
+    element('span', 'rating-count', `${game.reviewCount.toLocaleString('ru-RU')} отзывов`),
+  );
+  if (game.reviewScoreDesc) box.title = game.reviewScoreDesc;
+  return box;
 }
 
 function sorted(items) {
@@ -93,6 +122,7 @@ function sorted(items) {
   if (mode === 'date') return copy.sort((a,b) => unknownLast(a,b,'dateAdded'));
   if (mode === 'price') return copy.sort((a,b) => unknownLast(a,b,'priceMinor',1));
   if (mode === 'discount') return copy.sort((a,b) => unknownLast(a,b,'discountPercent'));
+  if (mode === 'rating') return copy.sort((a,b) => unknownLast(a,b,'reviewPercent'));
   if (mode === 'end') return copy.sort((a,b) => unknownLast(a,b,'discountEndAt',1));
   return copy.sort((a,b) => unknownLast(a,b,'savingsMinor'));
 }
@@ -100,7 +130,8 @@ function sorted(items) {
 function renderCatalog() {
   const data = state.catalogs.get(state.view) || { games: [], syncedAt: null };
   const query = state.query.trim().toLocaleLowerCase('ru');
-  const available = state.view === 'deals' ? currentDeals(data.games || []) : (data.games || []);
+  const pool = state.view === 'deals' ? currentDeals(data.games || []) : (data.games || []);
+  const available = state.hideWeak ? pool.filter((game) => !game.weak) : pool;
   const games = sorted(available.filter((game) => !query || String(game.name).toLocaleLowerCase('ru').includes(query)));
   $('#catalog').replaceChildren(...games.slice(0, 600).map(card));
   $('#summary').replaceChildren(
@@ -173,6 +204,8 @@ document.querySelectorAll('[data-go-settings]').forEach((button) => button.addEv
 window.addEventListener('hashchange', () => loadView(location.hash.slice(1)));
 $('#search').addEventListener('input', (event) => { state.query = event.target.value; renderCatalog(); });
 $('#sort').addEventListener('change', (event) => { state.sort = event.target.value; renderCatalog(); });
+$('#hide-weak').checked = state.hideWeak;
+$('#hide-weak').addEventListener('change', (event) => { state.hideWeak = event.target.checked; writeHideWeak(state.hideWeak); renderCatalog(); });
 $('#sync').addEventListener('click', syncCurrent);
 $('#steam-id').addEventListener('input', (event) => { const digits = normalizeSteamId(event.target.value); if (event.target.value !== digits) event.target.value = digits; event.target.setCustomValidity(steamIdProblem(digits)); });
 $('#logout').addEventListener('click', async () => { try { await api('/api/logout', { method: 'POST' }); location.reload(); } catch (error) { flash(error.message, true); } });

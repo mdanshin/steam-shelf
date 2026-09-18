@@ -34,3 +34,17 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
   .legal{width:calc(100% - 24px);margin:32px auto;padding:22px}
   .topbar{gap:10px}
 }
+
+/* Rating badge and the filter toggle beside it. */
+.game-rating{display:flex;align-items:baseline;gap:7px;margin-top:8px;font-size:12px}
+.game-rating .rating-percent{font-weight:800}
+.game-rating .rating-count{color:var(--muted)}
+.game-rating.good .rating-percent{color:#7ce8db}
+.game-rating.fair .rating-percent{color:#e9c46a}
+.game-rating.poor .rating-percent{color:var(--danger)}
+.game-rating.unrated{color:#617089}
+.toggle-label{display:flex;align-items:center;gap:8px;color:var(--muted);white-space:nowrap;cursor:pointer}
+.toggle-label input{width:16px;height:16px;accent-color:var(--blue);margin:0}
+@media(max-width:600px){
+  .toggle-label{flex-basis:100%;white-space:normal}
+}
