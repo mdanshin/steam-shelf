@@ -294,6 +294,37 @@ class LightSweepTests(unittest.TestCase):
         self.assertFalse(sync_deals.is_publishable({"appid": 5, "type": 0, "visible": True}))
 
 
+class RatingTests(unittest.TestCase):
+    def test_weak_only_flags_entries_that_have_a_rating_to_judge(self):
+        # Unrated is not weak: a new release with no reviews should not be hidden.
+        self.assertFalse(sync_deals.weak_game(None, None))
+        self.assertFalse(sync_deals.weak_game(95, None))
+        self.assertFalse(sync_deals.weak_game(None, 5000))
+        # At or above both thresholds is kept.
+        self.assertFalse(sync_deals.weak_game(70, 50))
+        self.assertFalse(sync_deals.weak_game(91, 334))
+        # Below either threshold is weak.
+        self.assertTrue(sync_deals.weak_game(69, 5000))
+        self.assertTrue(sync_deals.weak_game(99, 49))
+
+    def test_review_summary_converts_totals_into_a_percentage(self):
+        payload = {"query_summary": {"review_score": 6, "review_score_desc": "В основном положительные",
+                                     "total_positive": 239, "total_negative": 95, "total_reviews": 334}}
+        with mock.patch.object(sync_deals, "fetch_json", return_value=payload):
+            appid, rating = sync_deals.review_summary(447700)
+        self.assertEqual(appid, 447700)
+        self.assertEqual(rating["reviewPercent"], 72)
+        self.assertEqual(rating["reviewCount"], 334)
+        self.assertEqual(rating["reviewScore"], 6)
+        self.assertEqual(rating["reviewScoreDesc"], "В основном положительные")
+
+    def test_missing_or_failing_reviews_leave_an_entry_unrated(self):
+        with mock.patch.object(sync_deals, "fetch_json", return_value={"query_summary": {"total_reviews": 0}}):
+            self.assertEqual(sync_deals.review_summary(1)[1], {})
+        with mock.patch.object(sync_deals, "fetch_json", side_effect=RuntimeError("Steam request failed")):
+            self.assertEqual(sync_deals.review_summary(1)[1], {})
+
+
 class WatchlistTests(unittest.TestCase):
     ITEM = {
         "appid": 447700, "name": "Crystal Crisis", "type": 0, "visible": True, "tags": [],

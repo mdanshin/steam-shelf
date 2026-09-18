@@ -54,6 +54,10 @@ PRICE_BATCH = 200
 PRICE_WORKERS = 4
 # Batches in flight at once, so only a bounded slice of raw store items is held.
 PRICE_WINDOW = 40
+REVIEW_URL = "https://store.steampowered.com/appreviews"
+# Steam's own wording: 6 is "mostly positive", 5 "mixed", 4 and below negative.
+MIN_REVIEW_PERCENT = 70
+MIN_REVIEW_COUNT = 50
 WATCHLIST = ROOT / "data" / "free-to-keep-watchlist.json"
 
 
@@ -160,6 +164,41 @@ def parse_rows(fragment: str) -> list[dict]:
         })
     return parsed
 
+
+
+def review_summary(appid: int) -> tuple[int, dict]:
+    """Positive share and review count for one app.
+
+    The Specials rows carry this for the few thousand apps the search lists, but
+    the catalogue sweep finds thousands more that never appear there, so ratings
+    are read from Steam's review endpoint for everything that gets published.
+    """
+    url = f"{REVIEW_URL}/{appid}?json=1&language=all&purchase_type=all&num_per_page=0"
+    try:
+        summary = fetch_json(url).get("query_summary", {})
+    except Exception:
+        return appid, {}
+    total = int(summary.get("total_reviews") or 0)
+    positive = int(summary.get("total_positive") or 0)
+    if total <= 0:
+        return appid, {}
+    return appid, {
+        "reviewPercent": round(positive * 100 / total),
+        "reviewCount": total,
+        "reviewScore": int(summary.get("review_score") or 0),
+        "reviewScoreDesc": str(summary.get("review_score_desc") or ""),
+    }
+
+
+def weak_game(percent: int | None, count: int | None) -> bool:
+    """Whether an entry is the filler the rating filter is meant to hide.
+
+    Unrated entries are not called weak: absence of reviews is not evidence of
+    a bad game, and hiding them by default would bury brand new releases.
+    """
+    if percent is None or count is None:
+        return False
+    return percent < MIN_REVIEW_PERCENT or count < MIN_REVIEW_COUNT
 
 
 def quality_pass(percent: int | None, count: int | None) -> bool:
@@ -487,6 +526,19 @@ def main() -> None:
 
     validate_published_volume(len(deals))
 
+    # Ratings for everything that ships, so the site can filter on them.
+    with ThreadPoolExecutor(max_workers=PRICE_WORKERS) as pool:
+        ratings = dict(pool.map(review_summary, [game["appid"] for game in deals]))
+    for game in deals:
+        rating = ratings.get(game["appid"]) or {}
+        if rating:
+            game.update(rating)
+        game.setdefault("reviewScore", 0)
+        game.setdefault("reviewScoreDesc", "")
+        game["weak"] = weak_game(game.get("reviewPercent"), game.get("reviewCount"))
+        game["qualityMatch"] = game["highValueMatch"] and quality_pass(
+            game.get("reviewPercent"), game.get("reviewCount"))
+
     # Steam's Specials listing never carries free-to-keep giveaways: they top out
     # at 95% off there. The store item itself reports them correctly, so watched
     # appids are read directly and merged in when they are currently discounted.
@@ -516,6 +568,9 @@ def main() -> None:
         "detailedApps": detailed,
         "discountedApps": len(discounted),
         "watchlistDeals": len(watchlist_deals),
+        "ratedDeals": sum(game.get("reviewCount") is not None for game in deals),
+        "weakDeals": sum(game.get("weak", False) for game in deals),
+        "ratingThresholds": {"percent": MIN_REVIEW_PERCENT, "count": MIN_REVIEW_COUNT},
         "exactPriceCandidates": len(deals),
         "highValueCandidates": high_value_candidates,
         "qualityCandidates": quality_candidates,
