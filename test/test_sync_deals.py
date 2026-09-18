@@ -307,6 +307,42 @@ class RatingTests(unittest.TestCase):
         self.assertTrue(sync_deals.weak_game(69, 5000))
         self.assertTrue(sync_deals.weak_game(99, 49))
 
+    def test_rating_pass_stops_when_its_budget_runs_out(self):
+        # A rating that never arrives must leave the entry unrated, never weak.
+        rows = [{"appid": index, "itemKey": f"App_{index}", "name": f"Game {index}",
+                 "discountPercent": 50, "roughOriginalMinor": None, "roughPriceMinor": None,
+                 "reviewPercent": None, "reviewCount": None, "url": "u"} for index in range(1, 101)]
+
+        def browse(appids, **_):
+            return [{"appid": appid, "name": f"Game {appid}", "type": 0, "visible": True, "tags": [],
+                     "best_purchase_option": {"original_price_in_cents": 20000,
+                                              "final_price_in_cents": 10000, "discount_pct": 50}}
+                    for appid in appids]
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "deals-data.js"
+            watchlist = Path(directory) / "watchlist.json"
+            watchlist.write_text('{"appids": []}', encoding="utf-8")
+            with mock.patch.object(sync_deals, "OUTPUT", output), \
+                    mock.patch.object(sync_deals, "WATCHLIST", watchlist), \
+                    mock.patch.object(sync_deals, "MIN_DEALS_ITEMS", 1), \
+                    mock.patch.object(sync_deals, "REVIEW_BUDGET_SECONDS", -1), \
+                    mock.patch.object(sync_deals, "fetch_json", return_value={"total_count": 104, "results_html": "x"}), \
+                    mock.patch.object(sync_deals, "parse_rows", side_effect=[rows, []]), \
+                    mock.patch.object(sync_deals, "official_genre_tags", return_value={}), \
+                    mock.patch.object(sync_deals, "browse_items", side_effect=browse), \
+                    mock.patch.object(sync_deals, "review_summary") as reviews, \
+                    mock.patch.dict(sync_deals.os.environ, {"STEAM_DEALS_SKIP_COVERS": "1"}), \
+                    mock.patch.object(sync_deals.time, "sleep"):
+                sync_deals.main()
+            published = output.read_text(encoding="utf-8")
+
+        reviews.assert_not_called()
+        self.assertIn('"ratingsFetched": 0', published)
+        self.assertIn('"ratingsPending": 100', published)
+        self.assertIn('"weak": false', published)
+        self.assertNotIn('"weak": true', published)
+
     def test_review_summary_converts_totals_into_a_percentage(self):
         payload = {"query_summary": {"review_score": 6, "review_score_desc": "В основном положительные",
                                      "total_positive": 239, "total_negative": 95, "total_reviews": 334}}
