@@ -5,6 +5,7 @@ import { currentDeals, normalizeSteamId, normalizeSyncSnapshot, steamIdProblem, 
 import { createGatewaySync } from './gateway.js';
 import { beginSessionTransition, captureSession, isCurrentSession, transitionForCredentialReplacement, transitionForDisconnect } from './session.js';
 import { createIndexedDbStorage, createVault } from './vault.js';
+import { filterByReviewCount, setupReviewCountFilter } from '../public/review-filter.js';
 
 const $ = (selector) => document.querySelector(selector);
 const config = window.STEAM_SHELF_FIREBASE_CONFIG;
@@ -26,7 +27,7 @@ function writeHideWeak(value) {
   writeFlag('hide-weak', value);
 }
 
-const state = { user: null, vault: null, credentials: null, controller: null, view: 'library', query: '', sort: 'playtime', catalogs: new Map(), epoch: 0, hideWeak: readHideWeak(), hideOwned: readFlag('hide-owned'), owned: null };
+const state = { user: null, vault: null, credentials: null, controller: null, view: 'library', query: '', sort: 'playtime', catalogs: new Map(), epoch: 0, hideWeak: readHideWeak(), hideOwned: readFlag('hide-owned'), owned: null, minReviews: 0 };
 const viewMeta = {
   library: { title: 'Библиотека', kicker: 'МОЯ КОЛЛЕКЦИЯ', empty: 'Откройте настройки и подключите Steam.', sorts: [['playtime','По времени в игре'],['recent','Недавно запущенные'],['name','По названию']] },
   wishlist: { title: 'Желаемое', kicker: 'СПИСОК ЖЕЛАНИЙ', empty: 'Синхронизируйте публичный wishlist.', sorts: [['date','Сначала добавленные недавно'],['discount','По размеру скидки'],['rating','По оценке'],['savings','По экономии'],['price','Сначала дешевле']] },
@@ -77,7 +78,7 @@ function rating(game) {
   const box = element('div', 'game-rating');
   if (!Number.isFinite(game.reviewPercent) || !Number.isFinite(game.reviewCount)) {
     box.classList.add('unrated');
-    box.append(element('span', '', 'Нет отзывов'));
+    box.append(element('span', 'rating-count', Number.isFinite(game.reviewCount) ? (game.reviewCount === 0 ? 'Нет отзывов' : `${game.reviewCount.toLocaleString('ru-RU')} отзывов`) : 'Отзывы не загружены'));
     return box;
   }
   // Steam's own bands, so the colour matches what the store shows.
@@ -109,18 +110,22 @@ function renderCatalog() {
   state.owned = ownedAppids();
   const query = state.query.trim().toLocaleLowerCase('ru');
   const pool = state.view === 'deals' ? currentDeals(data.games || []) : (data.games || []);
-  const rated = state.hideWeak ? pool.filter((game) => !game.weak) : pool;
+  const reviewed = ['deals', 'wishlist'].includes(state.view) ? filterByReviewCount(pool, state.minReviews) : pool;
+  const rated = state.hideWeak ? reviewed.filter((game) => !game.weak) : reviewed;
   const available = state.hideOwned && state.view === 'deals' && state.owned ? rated.filter((game) => !state.owned.has(Number(game.appid))) : rated;
   const games = sorted(available.filter((game) => !query || String(game.name).toLocaleLowerCase('ru').includes(query)));
   $('#catalog').replaceChildren(...games.slice(0, 600).map(card));
-  $('#summary').replaceChildren(element('span', '', `${games.length} из ${available.length}`), element('span', '', data.syncedAt ? `Обновлено ${new Date(data.syncedAt).toLocaleString('ru-RU')}` : 'Ещё не синхронизировано'));
-  $('#empty').hidden = games.length > 0; $('#empty-title').textContent = query ? 'Ничего не найдено' : 'Здесь пока пусто'; $('#empty-text').textContent = query ? 'Попробуйте изменить запрос.' : viewMeta[state.view].empty;
+  $('#summary').replaceChildren(element('span', '', `${games.length} из ${pool.length}`), element('span', '', data.syncedAt ? `Обновлено ${new Date(data.syncedAt).toLocaleString('ru-RU')}` : 'Ещё не синхронизировано'));
+  if (state.view === 'wishlist' && pool.some((game) => !Number.isFinite(game.reviewCount))) $('#summary').append(element('span', '', 'Чтобы загрузить недостающие отзывы, нажмите «Обновить».'));
+  const filtered = query || pool.length > 0;
+  $('#empty').hidden = games.length > 0; $('#empty-title').textContent = filtered ? 'Ничего не найдено' : 'Здесь пока пусто'; $('#empty-text').textContent = filtered ? 'Попробуйте изменить запрос или ослабить фильтры.' : viewMeta[state.view].empty;
 }
 
 async function loadView(view) {
   state.view = viewMeta[view] ? view : 'library'; const requested = state.view; const epoch = state.epoch; const meta = viewMeta[requested];
   document.querySelectorAll('.nav-button').forEach((button) => button.classList.toggle('active', button.dataset.view === requested));
   $('#section-title').textContent = meta.title; $('#section-kicker').textContent = meta.kicker; $('#settings-panel').hidden = requested !== 'settings'; $('#catalog-toolbar').hidden = requested === 'settings'; $('#catalog').hidden = requested === 'settings'; $('#summary').hidden = requested === 'settings'; $('#empty').hidden = true; $('#onboarding').hidden = Boolean(state.credentials) || requested === 'settings' || requested === 'deals';
+  $('#min-reviews-filter').hidden = !['deals', 'wishlist'].includes(requested);
   if (requested === 'settings') return;
   const sort = $('#sort'); sort.replaceChildren(...meta.sorts.map(([value,label]) => { const option = element('option','',label); option.value=value; return option; })); state.sort = meta.sorts[0][0]; $('#sync').hidden = requested === 'deals';
   if (requested === 'deals' && !state.catalogs.has('library') && state.vault) {
@@ -201,6 +206,7 @@ $('#hide-weak').checked = state.hideWeak;
 $('#hide-owned').checked = state.hideOwned;
 $('#hide-owned').addEventListener('change', (event) => { state.hideOwned = event.target.checked; writeFlag('hide-owned', state.hideOwned); renderCatalog(); });
 $('#hide-weak').addEventListener('change', (event) => { state.hideWeak = event.target.checked; writeHideWeak(state.hideWeak); renderCatalog(); });
+state.minReviews = setupReviewCountFilter($('#min-reviews'), (minimum) => { state.minReviews = minimum; renderCatalog(); });
 $('#sync').addEventListener('click', syncCurrent);
 $('#steam-id').addEventListener('input', (event) => { const digits = normalizeSteamId(event.target.value); if (event.target.value !== digits) event.target.value = digits; event.target.setCustomValidity(steamIdProblem(digits)); });
 $('#settings-form').addEventListener('submit', async (event) => {

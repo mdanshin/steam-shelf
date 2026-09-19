@@ -3,6 +3,7 @@ const STORE_ORIGIN = 'https://store.steampowered.com';
 const MAX_LIBRARY_BYTES = 5 * 1024 * 1024;
 const MAX_WISHLIST_BYTES = 512 * 1024;
 const MAX_DETAILS_BYTES = 256 * 1024;
+const REVIEW_BATCH_SIZE = 50;
 const MAX_LIBRARY = 20_000;
 const MAX_WISHLIST = 200;
 const MAX_NAME_LENGTH = 300;
@@ -98,6 +99,53 @@ async function library(steamId, apiKey, fetchImpl, signal, beforeFetch) {
   return normalized;
 }
 
+export async function enrichWishlistReviews(games, { fetchImpl = fetch, signal, beforeFetch, country = 'RU', language = 'russian' } = {}) {
+  const ratings = new Map();
+  for (let offset = 0; offset < games.length; offset += REVIEW_BATCH_SIZE) {
+    signal?.throwIfAborted();
+    const batch = games.slice(offset, offset + REVIEW_BATCH_SIZE);
+    const input = {
+      ids: batch.map((game) => ({ appid: game.appid })),
+      context: { language, country_code: country.toUpperCase() },
+      data_request: { include_reviews: true },
+    };
+    // Pace each batch through the same gateway budget as other Steam requests.
+    // Keep budget errors and cancellation outside the optional-data fallback.
+    if (beforeFetch) await beforeFetch(signal);
+    let payload;
+    try {
+      payload = await fetchJson(`${API_ORIGIN}/IStoreBrowseService/GetItems/v1/?${new URLSearchParams({ input_json: JSON.stringify(input) })}`, { headers: { Accept: 'application/json' } }, fetchImpl, { maxBytes: MAX_WISHLIST_BYTES, timeoutMs: 5_000, signal });
+    } catch {
+      signal?.throwIfAborted();
+      continue;
+    }
+    const items = payload.response?.store_items;
+    if (!Array.isArray(items)) continue;
+    const requested = new Set(batch.map((game) => game.appid));
+    for (const item of items) {
+      if (!requested.has(item?.appid)) continue;
+      // This summary includes all languages; summary_language_specific does not.
+      const summary = item.reviews?.summary_filtered;
+      const count = summary?.review_count;
+      const percent = summary?.percent_positive;
+      if (!Number.isSafeInteger(count) || count < 0) continue;
+      const reviewPercent = count > 0 && Number.isInteger(percent) && percent >= 0 && percent <= 100 ? percent : null;
+      const description = summary.review_score_label;
+      ratings.set(item.appid, {
+        reviewCount: count,
+        reviewPercent,
+        reviewScore: Number.isInteger(summary.review_score) && summary.review_score >= 0 && summary.review_score <= 9 ? summary.review_score : 0,
+        reviewScoreDesc: typeof description === 'string' && description.length <= MAX_NAME_LENGTH && !/[\u0000-\u001F\u007F]/.test(description) ? description : '',
+        weak: reviewPercent !== null && (reviewPercent < 70 || count < 50),
+      });
+    }
+  }
+  return games.map((game) => ({
+    ...game,
+    ...(ratings.get(game.appid) || { reviewCount: null, reviewPercent: null, reviewScore: 0, reviewScoreDesc: '', weak: false }),
+  }));
+}
+
 async function wishlist(steamId, fetchImpl, signal, beforeFetch) {
   const query = new URLSearchParams({ steamid: steamId });
   const payload = await fetchJson(`${API_ORIGIN}/IWishlistService/GetWishlist/v1/?${query}`, { headers: { Accept: 'application/json' } }, fetchImpl, { maxBytes: MAX_WISHLIST_BYTES, timeoutMs: 10_000, signal, beforeFetch });
@@ -133,7 +181,7 @@ async function wishlist(steamId, fetchImpl, signal, beforeFetch) {
     }
   });
   await Promise.all(workers);
-  return games;
+  return enrichWishlistReviews(games, { fetchImpl, signal, beforeFetch });
 }
 
 export async function syncSteamRequest(data, { fetchImpl = fetch, signal, beforeFetch } = {}) {

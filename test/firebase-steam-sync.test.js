@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { syncSteamRequest } from '../functions/steam-sync.js';
+import { enrichWishlistReviews, syncSteamRequest } from '../functions/steam-sync.js';
 
 const STEAM_ID = '76561199999999999';
 const API_KEY = 'A'.repeat(32);
@@ -30,11 +30,69 @@ test('wishlist sync needs no API key and does not send one to Store API', async 
     fetchImpl: async (url, options = {}) => {
       requests.push({ url: String(url), options });
       if (String(url).includes('IWishlistService')) return response({ response: { items: [{ appid: 10, date_added: 123 }] } });
+      if (String(url).includes('IStoreBrowseService')) return response({ response: { store_items: [{ appid: 10, reviews: { summary_filtered: { review_count: 250000, percent_positive: 97, review_score: 9, review_score_label: 'Крайне положительные' }, summary_language_specific: { review_count: 1000, percent_positive: 90 } } }] } });
       return response({ '10': { success: true, data: { name: 'Counter-Strike', price_overview: { final: 10000, initial: 20000, discount_percent: 50 } } } });
     },
   });
   assert.equal(result.games[0].savingsMinor, 10000);
-  assert.equal(requests[1].options.headers?.['x-webapi-key'], undefined);
+  assert.equal(result.games[0].reviewCount, 250000);
+  assert.equal(result.games[0].reviewPercent, 97);
+  assert.equal(result.games[0].reviewScoreDesc, 'Крайне положительные');
+  assert.equal(result.games[0].weak, false);
+  for (const request of requests.slice(1)) {
+    assert.equal(request.options.headers?.['x-webapi-key'], undefined);
+    assert.equal(request.url.includes(STEAM_ID), false);
+  }
+});
+
+test('wishlist reviews are fetched in bounded batches and matched by app id', async () => {
+  const games = Array.from({ length: 101 }, (_, index) => ({ appid: index + 1, name: `Game ${index + 1}` }));
+  const sizes = [];
+  let budgetCalls = 0;
+  const result = await enrichWishlistReviews(games, {
+    beforeFetch: async () => { budgetCalls += 1; },
+    fetchImpl: async (url, options) => {
+      const input = JSON.parse(new URL(url).searchParams.get('input_json'));
+      sizes.push(input.ids.length);
+      assert.equal(input.data_request.include_reviews, true);
+      assert.equal(options.redirect, 'error');
+      return response({ response: { store_items: input.ids.toReversed().map(({ appid }) => ({ appid, reviews: { summary_filtered: { review_count: appid * 1000, percent_positive: 95 } } })) } });
+    },
+  });
+  assert.deepEqual(sizes, [50, 50, 1]);
+  assert.equal(budgetCalls, 3);
+  assert.deepEqual(result.map((game) => game.appid), games.map((game) => game.appid));
+  assert.equal(result[100].reviewCount, 101000);
+});
+
+test('unavailable and missing review data remains unknown while confirmed zero stays zero', async () => {
+  const games = [{ appid: 10, name: 'Game', priceMinor: 10000 }, { appid: 20 }, { appid: 30 }];
+  const unavailable = await enrichWishlistReviews(games, { fetchImpl: async () => response({}, 503) });
+  assert.equal(unavailable[0].priceMinor, 10000);
+  assert.equal(unavailable[0].reviewCount, null);
+  assert.equal(unavailable[0].weak, false);
+
+  const result = await enrichWishlistReviews(games, { fetchImpl: async () => response({ response: { store_items: [
+    null,
+    { appid: 10, reviews: { summary_filtered: { review_count: 0, percent_positive: 0 } } },
+    { appid: 20, reviews: { summary_filtered: { review_count: -1, percent_positive: 101 } } },
+  ] } }) });
+  assert.deepEqual(result.map((game) => game.reviewCount), [0, null, null]);
+  assert.deepEqual(result.map((game) => game.reviewPercent), [null, null, null]);
+});
+
+test('review enrichment propagates cancellation and upstream budget errors', async () => {
+  const controller = new AbortController();
+  await assert.rejects(() => enrichWishlistReviews([{ appid: 10 }], {
+    signal: controller.signal,
+    fetchImpl: async () => { controller.abort(new Error('client disconnected')); throw controller.signal.reason; },
+  }), /client disconnected/);
+  let calls = 0;
+  await assert.rejects(() => enrichWishlistReviews([{ appid: 10 }], {
+    beforeFetch: async () => { throw new Error('upstream budget exhausted'); },
+    fetchImpl: async () => { calls += 1; },
+  }), /upstream budget exhausted/);
+  assert.equal(calls, 0);
 });
 
 test('invalid client input performs no network calls', async () => {

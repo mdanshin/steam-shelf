@@ -47,8 +47,15 @@ function normalizeGame(resource, game) {
     originalPriceMinor: optionalNonNegativeInteger(game.originalPriceMinor, 'original price'),
     savingsMinor: optionalNonNegativeInteger(game.savingsMinor, 'savings'),
     discountPercent: nonNegativeInteger(game.discountPercent, 'discount'),
+    reviewCount: optionalNonNegativeInteger(game.reviewCount ?? null, 'review count'),
+    reviewPercent: optionalNonNegativeInteger(game.reviewPercent ?? null, 'review percentage'),
+    reviewScore: nonNegativeInteger(game.reviewScore ?? 0, 'review score'),
+    reviewScoreDesc: game.reviewScoreDesc ?? '',
   };
   if (normalized.discountPercent > 100) throw new TypeError('Invalid discount in game record');
+  if (normalized.reviewPercent > 100 || normalized.reviewScore > 9 || typeof normalized.reviewScoreDesc !== 'string' || normalized.reviewScoreDesc.length > 300 || /[\u0000-\u001F\u007F]/.test(normalized.reviewScoreDesc)) throw new TypeError('Invalid reviews in game record');
+  if (!normalized.reviewCount) normalized.reviewPercent = null;
+  normalized.weak = normalized.reviewPercent !== null && (normalized.reviewPercent < 70 || normalized.reviewCount < 50);
   return normalized;
 }
 
