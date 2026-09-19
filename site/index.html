@@ -52,6 +52,11 @@
       <section id="catalog-toolbar" class="toolbar">
         <label class="search"><span>⌕</span><input id="search" type="search" placeholder="Найти игру" autocomplete="off"></label>
         <label class="select-label">Сортировка <select id="sort"></select></label>
+        <div id="min-reviews-filter" class="review-filter" hidden>
+          <label for="min-reviews">Минимум отзывов</label>
+          <input id="min-reviews" type="number" min="0" max="9007199254740991" step="1" inputmode="numeric" value="0" aria-describedby="min-reviews-help">
+          <small id="min-reviews-help">0 — без ограничения</small>
+        </div>
         <label class="toggle-label" title="Скрывает игры с оценкой ниже 70% или менее чем 50 отзывами"><input id="hide-weak" type="checkbox"> Только с хорошей оценкой</label>
         <label class="toggle-label" title="Скрывает игры, которые уже есть в вашей библиотеке Steam"><input id="hide-owned" type="checkbox"> Скрыть мои игры</label>
         <button id="sync" class="primary">Обновить</button>

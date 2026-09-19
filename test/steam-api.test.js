@@ -27,13 +27,15 @@ test('wishlist keeps delisted entries and normalizes regional prices', async () 
   const fetchImpl = async (url) => {
     const text = String(url);
     if (text.includes('IWishlistService')) return new Response(JSON.stringify({ response: { items: [{ appid: 20, date_added: 123 }, { appid: 30, date_added: 456 }] } }), { status: 200 });
+    if (text.includes('IStoreBrowseService')) return new Response(JSON.stringify({ response: { store_items: [{ appid: 20, reviews: { summary_filtered: { review_count: 300000, percent_positive: 94 } } }] } }), { status: 200 });
     if (text.includes('appids=20')) return new Response(JSON.stringify({ 20: { success: true, data: { name: 'Game', header_image: 'https://cdn.example/game.jpg', price_overview: { initial: 20000, final: 10000, discount_percent: 50 } } } }), { status: 200 });
     return new Response(JSON.stringify({ 30: { success: false } }), { status: 200 });
   };
   const result = await fetchWishlist({ steamId, country: 'ru', language: 'russian', fetchImpl, concurrency: 2 });
   assert.equal(result.games.length, 2);
-  assert.deepEqual(result.games.find((game) => game.appid === 20), { appid: 20, name: 'Game', dateAdded: 123, priceMinor: 10000, originalPriceMinor: 20000, savingsMinor: 10000, discountPercent: 50, coverUrl: null, storeUrl: 'https://store.steampowered.com/app/20/' });
+  assert.deepEqual(result.games.find((game) => game.appid === 20), { appid: 20, name: 'Game', dateAdded: 123, priceMinor: 10000, originalPriceMinor: 20000, savingsMinor: 10000, discountPercent: 50, coverUrl: null, storeUrl: 'https://store.steampowered.com/app/20/', reviewCount: 300000, reviewPercent: 94, reviewScore: 0, reviewScoreDesc: '', weak: false });
   assert.equal(result.games.find((game) => game.appid === 30).priceMinor, null);
+  assert.equal(result.games.find((game) => game.appid === 30).reviewCount, null);
 });
 
 test('SteamID and API key inputs are strictly validated before network access', async () => {

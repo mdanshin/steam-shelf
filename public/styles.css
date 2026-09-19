@@ -35,6 +35,14 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
   .topbar{gap:10px}
 }
 
+/* Review filters wrap alongside search and sorting on smaller screens. */
+.toolbar,.summary{flex-wrap:wrap}
+.toolbar .search{min-width:200px}
+.review-filter{display:grid;grid-template-columns:auto 110px;align-items:center;gap:3px 8px;color:var(--muted)}
+.review-filter input{min-width:0;width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--text);font-size:16px}
+.review-filter input:focus{outline:2px solid var(--blue);outline-offset:2px}
+.review-filter small{grid-column:1 / -1;font-size:12px}
+
 /* Rating badge and the filter toggle beside it. */
 .game-rating{display:flex;align-items:baseline;gap:7px;margin-top:8px;font-size:12px}
 .game-rating .rating-percent{font-weight:800}

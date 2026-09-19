@@ -61,3 +61,22 @@ test('expired Steam deals are not shown after their source end time', () => {
 
   assert.deepEqual(currentDeals([ended, active, unknown], 1_787_890_000), [active, unknown]);
 });
+
+test('wishlist snapshots retain review statistics and support older snapshots', () => {
+  const game = { appid: 10, name: 'Game', dateAdded: 0, priceMinor: 100, originalPriceMinor: 200, savingsMinor: 100, discountPercent: 50 };
+  const normalize = (reviews) => normalizeSyncSnapshot('wishlist', { resource: 'wishlist', games: [{ ...game, ...reviews }], syncedAt: '2026-09-19T00:00:00Z' }).games[0];
+  const rated = normalize({ reviewCount: 250000, reviewPercent: 97, reviewScore: 9, reviewScoreDesc: 'Крайне положительные' });
+  assert.equal(rated.reviewCount, 250000);
+  assert.equal(rated.reviewPercent, 97);
+  assert.equal(rated.reviewScore, 9);
+  assert.equal(rated.reviewScoreDesc, 'Крайне положительные');
+  assert.equal(rated.weak, false);
+  assert.equal(normalize({ reviewCount: 49, reviewPercent: 97 }).weak, true);
+  assert.equal(normalize({ reviewCount: 250000, reviewPercent: 69 }).weak, true);
+  assert.equal(normalize({}).reviewCount, null);
+  assert.equal(normalize({}).reviewPercent, null);
+  assert.equal(normalize({ reviewCount: 0, reviewPercent: 0 }).reviewPercent, null);
+  assert.throws(() => normalize({ reviewCount: -1 }), /review/i);
+  assert.throws(() => normalize({ reviewCount: 100, reviewPercent: 101 }), /review/i);
+  assert.throws(() => normalize({ reviewScore: 10 }), /review/i);
+});
